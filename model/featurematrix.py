@@ -28,7 +28,7 @@ class FeatureMatrix(Constants):
                 # TODO: add parts of paddle
                 pos = list(state.keys())[0][1]
                 print('paddle', pos)
-                for i in range(1 - paddle_width // 2, paddle_width // 2 + 1):
+                for i in range(1 - paddle_width // 2, paddle_width // 2):
                     for j in range(-paddle_height // 2 + 1, paddle_height // 2 + 1):
                         ind = self.transform_pos_to_index((pos[0]+j, pos[1]+i))
                         self.matrix[ind][self.PADDLE_IDX] = 1
