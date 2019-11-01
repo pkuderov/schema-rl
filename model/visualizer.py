@@ -81,8 +81,8 @@ class Visualizer(Constants):
 
         if duplicate_indices.size:
             print('BAD_ENTITY (several bits per pixel): {} conflicts'.format(duplicate_indices.size))
-            for idx in duplicate_indices:
-                print('idx: {}, entity: {}'.format(idx, entities[idx]))
+            # for idx in duplicate_indices:
+            #    print('idx: {}, entity: {}'.format(idx, entities[idx]))
             print()
             # raise AssertionError
 

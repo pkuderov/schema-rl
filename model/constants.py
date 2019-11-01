@@ -17,8 +17,8 @@ class Constants:
 
         N = SCREEN_WIDTH * SCREEN_HEIGHT
         M = 5
-        T = 1
-        ACTION_SPACE_DIM = 3
+        T = 10
+        ACTION_SPACE_DIM = 2
         REWARD_SPACE_DIM = 2
 
         NEIGHBORHOOD_RADIUS = 2
@@ -29,11 +29,12 @@ class Constants:
         N = 9  # SCREEN_WIDTH * SCREEN_HEIGHT
         M = 1
         T = 50
-        ACTION_SPACE_DIM = 3
+        ACTION_SPACE_DIM = 2
         REWARD_SPACE_DIM = 2
 
         NEIGHBORHOOD_RADIUS = 1
 
+    EP_NUM = 10
     L = 1000
     FILTER_SIZE = 2 * NEIGHBORHOOD_RADIUS + 1
     NEIGHBORS_NUM = FILTER_SIZE ** 2 - 1
