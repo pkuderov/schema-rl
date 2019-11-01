@@ -156,8 +156,8 @@ class Player(Constants):
                     print('fitted reward ok:', self.reward_model.fit(X_reward, y_reward))
 
                     # make a decision
-                    rand = random.randint(1, 10)
-                    if flag == 0 and rand < 8:
+                    r = random.randint(1, self.ACTION_SPACE_DIM)
+                    if flag == 0 and r == 1:
                         action = self._get_action_for_reward(env)
                     else:
                         start = time.time()
