@@ -6,10 +6,11 @@ from model.constants import Constants
 
 
 class SchemaNet(Constants):
-    def __init__(self):
+    def __init__(self, void=1):
         self.neighbour_num = ((self.NEIGHBORHOOD_RADIUS * 2 + 1) ** 2) * self.FRAME_STACK_SIZE
-        self._W = [np.zeros([self.neighbour_num * self.M + self.ACTION_SPACE_DIM, 1])[:] + 1 for i in range(self.M)]
+        self._W = [np.zeros([self.neighbour_num * self.M + self.ACTION_SPACE_DIM, 1])[:] + 1 for i in range(self.M - 1)]
         self.solved = np.array([])
+        self.void = void
         # self._R = [np.zeros(self.neighbour_num * self.M + self.ACTION_SPACE_DIM) + 1] * 2
 
     def log(self):
@@ -29,12 +30,15 @@ class SchemaNet(Constants):
         return ((X == 0) @ self._W[i] == 0) != 0
 
     def predict(self, X):
-        return np.array([self._predict_attr(X, i) for i in range(self.M)])
+        tmp = np.array([self._predict_attr(X, i) for i in range(self.M - self.void)])
+        print('5555555', tmp.shape, (tmp.sum(axis=0) == 0).reshape(1, -1).shape)
+        return np.concatenate((tmp, (tmp.sum(axis=0) == 0).reshape(1, -1)), axis=0)
 
     def add(self, schemas, i):
         self._W[i] = np.vstack((self._W[i].T, schemas.T)).T
 
-    def scipy_solve_lp(self, zero_pred, c, A_ub, b_ub, A_eq, b_eq, options={'maxiter': 200, "disp": False}):
+    def scipy_solve_lp(self, zero_pred, c, A_ub, b_ub, A_eq, b_eq, maxiter=200):
+        options = {'maxiter': maxiter, "disp": False}
         if len(zero_pred) == 0:
             return linprog(c=c, A_eq=A_eq, b_eq=b_eq, options=options).x.round(2)
         else:
@@ -69,7 +73,12 @@ class SchemaNet(Constants):
         w = self.scipy_solve_lp(zero_pred, c, A_ub, b_ub, A_eq, b_eq)
 
         preds = ((X == 0) @ w) == 0
-        self.solved = np.vstack((self.solved, X[preds * (self._predict_attr(X, i) == 0)]))
+        print('expected:', (X[preds * (self._predict_attr(X, i) == 0)]).shape)
+        print('needed for:', (self._predict_attr(X, i) == 0).sum(), preds.sum())
+        if preds.sum() == 0:
+            return None
+        self.solved = np.vstack((X[preds * (self._predict_attr(X, i) == 0)]))
+        print('solved for:', self.solved.shape)
         if self.solved is None:
             print('CONFLICT DATA')
             return None
@@ -91,10 +100,10 @@ class SchemaNet(Constants):
         if len(self._W[i].shape) == 1:
             return np.zeros(self._W[i].shape[0])
         pred = self._schema_predict_attr(X, i).T
-        return ((y[i] - pred) == -1)
+        return (y[i] - pred) == -1
 
     def _remove_wrong_schemas(self, X, y):
-        for i in range(self.M):
+        for i in range(self.M - self.void):
             if len(self._W[i].shape) == 1:
                 break
             wrong_ind = self._actuality_check_attr(X, y, i).sum(axis=1)
@@ -142,9 +151,10 @@ class SchemaNet(Constants):
 
         self._remove_wrong_schemas(X, Y)
 
-        for i in (range(self.M)):
+        for i in (range(self.M - self.void)):
 
-            for j in (range(self.L)):
+            while (self._W[0]).shape[1] < self.L and (self._W[1]).shape[1] < self.L and (self._W[2]).shape[
+                1] < self.L and (self._W[3]).shape[1] < self.L:
 
                 # change!!!!!!!
                 if isinstance((self._predict_attr(X, i) == Y[i]), np.ndarray):
@@ -165,20 +175,21 @@ class SchemaNet(Constants):
 
                 w = self._get_schema(x, y, i)
                 if w is None:
-                    return
+                    return False
                 w = (self._simplify_schema(x, y) > 0.1).astype(np.bool, copy=False)
                 self.add(w, i)
                 if log:
                     self.log()
+        return True
 
     def save(self, type_name='standard', is_reward=''):
         path = '_schemas_' + type_name + is_reward
         if not os.path.exists(path):
             os.makedirs(path)
-        for i in range(self.M):
+        for i in range(self.M - self.void):
             np.savetxt(path + '/schema' + str(i) + '.txt', self._W[i])
 
     def load(self, type_name='standard'):
-        for i in range(self.M):
+        for i in range(self.M - self.void):
             schema = np.loadtxt('_schemas_' + type_name + '/schema' + str(i) + '.txt')
             self._W[i] = schema
