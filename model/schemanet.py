@@ -16,6 +16,11 @@ class SchemaNet(Constants):
     def log(self):
         print('current net:\n', [self._W[i].shape for i in range(len(self._W))])
 
+    def print(self):
+        print('current net:\n')
+        for i in range(len(self._W)):
+            print('   ' * i, self._W[i].T)
+
     def _predict_attr(self, X, i):
         if len(self._W[i].shape) == 1:
             return ((X == 0) @ self._W[i]) == 0
@@ -150,6 +155,7 @@ class SchemaNet(Constants):
 
             while (self._W[0]).shape[1] < self.L and (self._W[1]).shape[1] < self.L and (self._W[2]).shape[
                 1] < self.L and (self._W[3]).shape[1] < self.L:
+
                 # change!!!!!!!
                 if isinstance((self._predict_attr(X, i) == Y[i]), np.ndarray):
                     if (self._predict_attr(X, i) == Y[i]).all():
