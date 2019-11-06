@@ -7,10 +7,6 @@ remaining constants may be changed with caution. Proceed at your own risk.
 import numpy as np
 
 
-# DEFAULT, SMALL
-BRICK_SIZE = 'SMALL'
-ENV_SIZE = 'SMALL'
-
 ###############################################################################
 #
 #   DO NOT CHANGE !!!
@@ -18,7 +14,7 @@ ENV_SIZE = 'SMALL'
 #   These constants determine the maximum radius up to which graceful dynamics
 #   are guaranteed without too many visual artifacts. Recommended value: 2.
 #
-_MAX_SPEED = 1
+_MAX_SPEED = 2
 _BALL_SHAPE = np.array([1, 1])
 ###############################################################################
 
@@ -29,44 +25,19 @@ _BALL_SHAPE = np.array([1, 1])
 MAX_NZIS_PER_ENTITY = 100
 
 ALLOW_BOUNCE_AGAINST_PHYSICS = False
-BOUNCE_STOCHASTICITY = 0  # was 0.25
+BOUNCE_STOCHASTICITY = 0.25
 CORRUPT_RENDERED_IMAGE = False
 DEBUGGING = False
 DEFAULT_BRICK_REWARD = 1
-
-if BRICK_SIZE == 'DEFAULT':
-    DEFAULT_BRICK_SHAPE = np.array([8, 4])
-
-    if ENV_SIZE == 'DEFAULT':
-        DEFAULT_NUM_BRICKS_ROWS = 6
-        DEFAULT_NUM_BRICKS_COLS = 11
-    elif ENV_SIZE == 'SMALL':
-        DEFAULT_NUM_BRICKS_ROWS = 6
-        DEFAULT_NUM_BRICKS_COLS = 6
-    else:
-        raise AssertionError
-
-elif BRICK_SIZE == 'SMALL':
-    DEFAULT_BRICK_SHAPE = np.array([2, 2])
-
-    if ENV_SIZE == 'DEFAULT':
-        DEFAULT_NUM_BRICKS_ROWS = 12
-        DEFAULT_NUM_BRICKS_COLS = 44
-    elif ENV_SIZE == 'SMALL':
-        DEFAULT_NUM_BRICKS_ROWS = 12
-        DEFAULT_NUM_BRICKS_COLS = 24
-    else:
-        raise AssertionError
-
-else:
-    raise AssertionError
-
+DEFAULT_BRICK_SHAPE = np.array([2, 2])
+DEFAULT_NUM_BRICKS_COLS = 11
+DEFAULT_NUM_BRICKS_ROWS = 6
 DEFAULT_WALL_THICKNESS = 3
 DEFAULT_WIDTH = (DEFAULT_WALL_THICKNESS * 2 +
                  DEFAULT_NUM_BRICKS_COLS *
                  DEFAULT_BRICK_SHAPE[0])
 DEFAULT_HEIGHT = int(1.25 * DEFAULT_WIDTH)
-DEFAULT_PADDLE_SHAPE = np.array([int(DEFAULT_WIDTH * .25), 4])
+DEFAULT_PADDLE_SHAPE = np.array([int(DEFAULT_WIDTH * .25), 2])
 EXCLUDED_VELOCITIES = frozenset(
     {(u*(v+1), 0) for u in (-1, 1) for v in range(_MAX_SPEED)})
 NUM_BALLS = 1
@@ -74,7 +45,7 @@ NUM_LIVES = 3  # Inf is useful for effortless debugging
 PADDLE_SPEED = 2
 PADDLE_SPEED_DISTRIBUTION = np.zeros((2 * PADDLE_SPEED + 1,))
 PADDLE_SPEED_DISTRIBUTION[-1] = 1.
-PADDLE_SPEED_DISTRIBUTION[-2] = 0.
+PADDLE_SPEED_DISTRIBUTION[-2] = 0
 PADDLE_STARTING_POSITION = (None, None)
 REWARD_UPON_BALL_LOSS = -1
 REWARD_UPON_NO_BRICKS_LEFT = 0
@@ -90,3 +61,6 @@ CLASSIC_BRICK_COLORS = [(66, 72, 200), (72, 160, 72), (163, 162, 42),
 CLASSIC_PADDLE_COLOR = (200, 72, 73)
 CLASSIC_WALL_COLOR = (142, 142, 142)
 DEFAULT_PADDLE_COLOR = CLASSIC_BALL_COLOR
+
+if __name__ == '__main__':
+    print(DEFAULT_WIDTH, DEFAULT_HEIGHT)
