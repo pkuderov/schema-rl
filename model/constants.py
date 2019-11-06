@@ -12,8 +12,8 @@ class Constants:
     VISUALIZE_INNER_STATE = True
 
     if not DEBUG:
-        SCREEN_WIDTH = 94
-        SCREEN_HEIGHT = 117
+        SCREEN_WIDTH = 28
+        SCREEN_HEIGHT = 35
 
         N = SCREEN_WIDTH * SCREEN_HEIGHT
         M = 5
