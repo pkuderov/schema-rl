@@ -2,6 +2,7 @@ import numpy as np
 from model.constants import Constants
 import environment.schema_games.breakout.constants as constants
 
+
 class FeatureMatrix(Constants):
     def __init__(self, env):
         """

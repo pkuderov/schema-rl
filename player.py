@@ -147,9 +147,6 @@ class Player(Constants):
                     X_tmp, ind = np.unique(X_global, axis=0, return_index=True, )
                     X_global = X_global[ind]
                     y_global = (y_global.T[ind]).T
-
-                    print('&&&&&&&&&&&&&&&', y_reward.shape, X_reward.shape, reward)
-
                     # learn env state:
 
                     print('fitted ok:', self.model.fit(X_global, y_global))
@@ -190,8 +187,8 @@ class Player(Constants):
                 elif reward == -1:
                     j = 0
                     self._free_mem()
-                else:
-                    reward = self.get_paddle_reward(env)
+                # else:
+                # reward = self.get_paddle_reward(env)
 
                 self.rewards.append(reward)
 
