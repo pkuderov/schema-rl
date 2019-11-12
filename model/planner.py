@@ -12,7 +12,7 @@ class Planner(Constants):
 
         # for visualizing purposes
         self.curr_target = None
-        self.node2triplets = None
+        self.node2triplets = defaultdict(list)
 
     def _backtrace_schema(self, schema):
         """
@@ -45,8 +45,6 @@ class Planner(Constants):
         # neg_schemas for reward at the same time step as node's time step
         # neg_schemas = self._reward_nodes[node.t, Reward.sign2idx['neg']].schemas
         # node.sort_schemas_by_harmfulness(neg_schemas)
-
-        node.sort_schemas_by_min_req_actions()
 
         for schema in node.schemas:
             if schema.is_reachable is None:
@@ -85,21 +83,6 @@ class Planner(Constants):
 
         return closest_reward_node
 
-    def _find_all_rewards(self, reward_sign):
-        """
-        Returns all reward nodes of sign reward_sign
-        """
-        assert (reward_sign in Reward.allowed_signs)
-        reward_idx = Reward.sign2idx[reward_sign]
-
-        rewards = []
-
-        for node in self._reward_nodes[:, reward_idx]:
-            if node.is_feasible:
-                rewards.append(node)
-
-        return rewards
-
     def _plan_for_rewards(self, reward_sign):
         """
         :param reward_sign: {pos, neg}
@@ -107,39 +90,38 @@ class Planner(Constants):
                  None if cannot plan for this sign of rewards
         """
         target_reward_nodes = []
-        print('Trying to plan for {} rewards...'.format(reward_sign))
+        print('trying to plan for {} rewards...'.format(reward_sign))
         planned_actions = None
 
-        rewards = self._find_all_rewards(reward_sign)
-        rewards = sorted(rewards, key=lambda node: node.weight, reverse=True)
+        search_from = 0
+        while search_from < self.T:
+            reward_node = self._find_closest_reward(reward_sign, search_from)
 
-        for reward_node in rewards:
+            if reward_node is None:
+                print('cannot find more {} reward nodes'.format(reward_sign))
+                break
+
             target_reward_nodes.append(reward_node)
-            print('Found feasible {} reward node with weight {}...'.format(reward_sign, reward_node.weight))
+            print('found feasible {} reward node, starting to backtrace it...'.format(reward_sign))
+
+            search_from = reward_node.t + 1
 
             # backtrace from it
             self.curr_target = reward_node
-            self.node2triplets = defaultdict(list)
             self._backtrace_node(reward_node)
             if reward_node.is_reachable:
-                print('Actions have been planned successfully!')
-
-                # here planned_actions is len(t-1) List of len(max(x, ACTION_SPACE_DIM)) Lists]
+                print('actions for reaching target {} reward node have been found successfully!'.format(reward_sign))
+                # actions for reaching target reward are planned
                 planned_actions = reward_node.activating_schema.required_cumulative_actions
 
-                # remove actions planned for past
-                planned_actions = planned_actions[self.FRAME_STACK_SIZE - 1:]
-
-                # picking first action as a result
+                # here planned_actions is len(t-1) List of len(max(x, ACTION_SPACE_DIM)) Lists]
+                # picking FIRST action as a result
                 planned_actions = [actions_at_t[0] if actions_at_t else Action.not_planned_idx
                                    for actions_at_t in planned_actions]
-
                 planned_actions = np.array(planned_actions)
                 break
-            else:
-                print('Backtraced {} reward node is unreachable.'.format(reward_sign))
-        else:
-            print('There are no more feasible {} reward nodes in the graph.'.format(reward_sign))
+
+            print('backtraced {} reward node is unreachable'.format(reward_sign))
 
         return planned_actions, target_reward_nodes
 
@@ -148,8 +130,6 @@ class Planner(Constants):
         planned_actions, target_reward_nodes = self._plan_for_rewards('pos')
 
         if planned_actions is not None:
-            pass
-            """
             randomness_mask = np.random.choice([True, False],
                                                size=planned_actions.size,
                                                p=[self.EPSILON, 1 - self.EPSILON])
@@ -158,10 +138,13 @@ class Planner(Constants):
             planned_actions[randomness_mask] = np.random.randint(low=0,
                                                                  high=self.ACTION_SPACE_DIM,
                                                                  size=randomness_size)
-            """
         else:
             # can't plan anything
-            print('Planner failed to plan.')
+            print('Planner failed to plan, returning random actions.')
+            planned_actions = np.random.randint(low=0,
+                                                high=self.ACTION_SPACE_DIM,
+                                                size=2)
+        #                                        size=self.T)
 
         return planned_actions, target_reward_nodes
 
