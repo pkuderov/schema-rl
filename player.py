@@ -58,6 +58,7 @@ class Player(Constants):
     def get_paddle_reward(self, env):
 
         pl, ph = constants.DEFAULT_PADDLE_SHAPE
+
         pos_ball = 0
         pos_paddle = 0
         for ball in env.balls:
@@ -69,8 +70,7 @@ class Player(Constants):
             for state, eid in env.parse_object_into_pixels(env.paddle):
                 pos_paddle = list(state.keys())[0][1]
 
-        if pos_ball[1] <= pos_paddle[1] + pl // 2 and pos_ball[1] >= pos_paddle[1] - pl // 2 and pos_ball[0] == \
-                pos_paddle[0] - 1:
+        if pos_paddle[1] + pl // 2 >= pos_ball[1] >= pos_paddle[1] - pl // 2 and pos_ball[0] == pos_paddle[0] - 2:
             return 1
         return 0
 
@@ -103,13 +103,12 @@ class Player(Constants):
         flag = 0
 
         # don't hardcode size!!
-        length_a = 252
+        length_a = 253
         length_e = 5
         X_global = np.zeros((1, length_a))
         X_reward = np.zeros((1, length_a))
         y_global = np.zeros((length_e, 1))
         y_reward = np.zeros((length_e, 1))
-        print('****', y_global.shape, X_global.shape)
 
         for i in range(self.EP_NUM):
             env = game_type(return_state_as_image=False)
@@ -121,7 +120,7 @@ class Player(Constants):
             j = 0
             action = 0
             state, reward, done, _ = env.step(action)
-
+            actions = []
 
             while not done:
                 vis_counter += 1
@@ -136,6 +135,7 @@ class Player(Constants):
                     y = self._y_add_prev_time()
 
                     X_tmp, ind = np.unique(X, axis=0, return_index=True, )
+                    print('log', X_global.shape, X[ind].shape)
                     X_global = np.concatenate((X_global, X[ind]), axis=0)
                     y_global = np.concatenate((y_global, y.T[ind].T), axis=1)
 
@@ -162,16 +162,20 @@ class Player(Constants):
                         W = [w == 1 for w in self.model._W]
                         R = [self.reward_model._W[0] == 1, self.reward_model._W[1] == 1]
 
-                        if all(w.shape[1] > 1 for w in W):
+                        if len(actions) > 0:
+                            action = actions.pop(0)
+                        elif all(w.shape[1] > 1 for w in W):
                             frame_stack = [obj.matrix for obj in self._memory[-self.FRAME_STACK_SIZE:]]
                             decision_model = SchemaNetwork(W, R, frame_stack)
                             decision_model.set_curr_iter(vis_counter)
-                            action = decision_model.plan_actions()[0] + 1
+                            actions = list(decision_model.plan_actions())
+                            print('got actions', len(actions))
+                            action = actions.pop(0)
                         else:
                             action = self._get_action_for_reward(env)
-
                         end = time.time()
                         print("--- %s seconds ---" % (end - start))
+
                     self._memory.pop(0)
 
 
@@ -179,6 +183,7 @@ class Player(Constants):
                 print('action:', action)
                 state, reward, done, _ = env.step(action)
                 if reward == 1:
+                    actions = []
                     if flag == 0:
                         print('PLAYER CHANGED')
                     flag = 1
@@ -186,9 +191,10 @@ class Player(Constants):
                     #
                 elif reward == -1:
                     j = 0
+                    actions = []
                     self._free_mem()
-                # else:
-                # reward = self.get_paddle_reward(env)
+                elif j > 200:
+                    reward = self.get_paddle_reward(env)
 
                 self.rewards.append(reward)
 
