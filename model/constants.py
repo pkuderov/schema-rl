@@ -8,18 +8,18 @@ class Constants:
     """
     DEBUG = False
 
-    VISUALIZE_SCHEMAS = False
+    VISUALIZE_SCHEMAS = True
     VISUALIZE_INNER_STATE = True
     VISUALIZE_BACKTRACKING = True
     VISUALIZE_STATE = True
 
     if not DEBUG:
-        SCREEN_HEIGHT = 67  # 117
-        SCREEN_WIDTH = 54  # 94      using 5 brick columns
+        SCREEN_HEIGHT = 117
+        SCREEN_WIDTH = 94  # using 5 brick columns
 
         N = SCREEN_WIDTH * SCREEN_HEIGHT
         M = 5
-        T = 3  # was 50  # min 112; better 130
+        T = 112  # was 50  # min 112; better 130
         ACTION_SPACE_DIM = 3
         REWARD_SPACE_DIM = 2
 
@@ -31,11 +31,12 @@ class Constants:
         N = 9  # SCREEN_WIDTH * SCREEN_HEIGHT
         M = 2
         T = 16
-        ACTION_SPACE_DIM = 3
+        ACTION_SPACE_DIM = 2
         REWARD_SPACE_DIM = 2
 
         NEIGHBORHOOD_RADIUS = 1
 
+    EP_NUM = 10
     L = 1000
     FILTER_SIZE = 2 * NEIGHBORHOOD_RADIUS + 1
     NEIGHBORS_NUM = FILTER_SIZE ** 2 - 1

@@ -143,7 +143,8 @@ class Planner(Constants):
             print('Planner failed to plan, returning random actions.')
             planned_actions = np.random.randint(low=0,
                                                 high=self.ACTION_SPACE_DIM,
-                                                size=self.T)
+                                                size=2)
+        #                                        size=self.T)
 
         return planned_actions, target_reward_nodes
 
