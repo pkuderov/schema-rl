@@ -122,6 +122,7 @@ class Player(Constants):
             state, reward, done, _ = env.step(action)
             actions = []
 
+
             while not done:
                 vis_counter += 1
 
@@ -135,7 +136,7 @@ class Player(Constants):
                     y = self._y_add_prev_time()
 
                     X_tmp, ind = np.unique(X, axis=0, return_index=True, )
-                    print('log', X_global.shape, X[ind].shape)
+
                     X_global = np.concatenate((X_global, X[ind]), axis=0)
                     y_global = np.concatenate((y_global, y.T[ind].T), axis=1)
 
@@ -143,6 +144,12 @@ class Player(Constants):
                     if l > 0:
                         y_r = self._transform_to_array(l, reward > 0, reward < 0)
                         y_reward = np.concatenate((y_reward, y_r), axis=1)
+
+                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True, )
+                    X_global = X_global[ind]
+                    y_global = (y_global.T[ind]).T
+
+                    print('&&&&&&&&&&&&&&&', y_reward.shape, X_reward.shape, reward)
 
                     X_tmp, ind = np.unique(X_global, axis=0, return_index=True, )
                     X_global = X_global[ind]
@@ -171,11 +178,6 @@ class Player(Constants):
                             actions = list(decision_model.plan_actions())
                             print('got actions', len(actions))
                             action = actions.pop(0)
-                        else:
-                            action = self._get_action_for_reward(env)
-                        end = time.time()
-                        print("--- %s seconds ---" % (end - start))
-
                     self._memory.pop(0)
 
 

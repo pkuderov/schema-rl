@@ -14,6 +14,7 @@ class Constants:
     VISUALIZE_STATE = True
 
     if not DEBUG:
+
         SCREEN_HEIGHT = 117
         SCREEN_WIDTH = 94  # using 5 brick columns
 
