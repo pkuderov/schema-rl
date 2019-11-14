@@ -195,7 +195,8 @@ class Visualizer(Constants):
                                                              self.ENTITY_NAMES[attribute_idx],
                                                              vec_idx)
                 path = os.path.join(self.ATTRIBUTE_SCHEMAS_DIR_NAME, file_name)
-                self._save_schema_image(vec, path)
+                self._save_schema_image \
+                    (vec, path)
 
         # reward schemas
         for reward_type, r in enumerate(R):

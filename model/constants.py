@@ -37,7 +37,7 @@ class Constants:
 
         NEIGHBORHOOD_RADIUS = 1
 
-    EP_NUM = 10
+    EP_NUM = 100
     L = 1000
     FILTER_SIZE = 2 * NEIGHBORHOOD_RADIUS + 1
     NEIGHBORS_NUM = FILTER_SIZE ** 2 - 1

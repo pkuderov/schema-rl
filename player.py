@@ -56,7 +56,6 @@ class Player(Constants):
     # def _update_reward(self, ):
 
     def get_paddle_reward(self, env):
-
         pl, ph = constants.DEFAULT_PADDLE_SHAPE
 
         pos_ball = 0
@@ -73,7 +72,6 @@ class Player(Constants):
         if pos_paddle[1] + pl // 2 >= pos_ball[1] >= pos_paddle[1] - pl // 2 and pos_ball[0] == pos_paddle[0] - 2:
             return 1
         return 0
-
 
     def _get_action_for_reward(self, env):
         pos_ball = 0
@@ -120,8 +118,7 @@ class Player(Constants):
             j = 0
             action = 0
             state, reward, done, _ = env.step(action)
-            actions = []
-
+            actions = [0, 1, 2]
 
             while not done:
                 vis_counter += 1
@@ -145,13 +142,11 @@ class Player(Constants):
                         y_r = self._transform_to_array(l, reward > 0, reward < 0)
                         y_reward = np.concatenate((y_reward, y_r), axis=1)
 
-                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True, )
+                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True)
                     X_global = X_global[ind]
                     y_global = (y_global.T[ind]).T
 
-                    print('&&&&&&&&&&&&&&&', y_reward.shape, X_reward.shape, reward)
-
-                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True, )
+                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True)
                     X_global = X_global[ind]
                     y_global = (y_global.T[ind]).T
                     # learn env state:
@@ -176,7 +171,7 @@ class Player(Constants):
                             decision_model = SchemaNetwork(W, R, frame_stack)
                             decision_model.set_curr_iter(vis_counter)
                             actions = list(decision_model.plan_actions())
-                            print('got actions', len(actions))
+                            print(vis_counter, 'got ', len(actions), ' actions:', actions)
                             action = actions.pop(0)
                     self._memory.pop(0)
 
@@ -195,8 +190,6 @@ class Player(Constants):
                     j = 0
                     actions = []
                     self._free_mem()
-                elif j > 200:
-                    reward = self.get_paddle_reward(env)
 
                 self.rewards.append(reward)
 
