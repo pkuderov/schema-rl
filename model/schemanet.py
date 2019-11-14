@@ -150,7 +150,6 @@ class SchemaNet(Constants):
 
             while (self._W[0]).shape[1] < self.L and (self._W[1]).shape[1] < self.L and (self._W[2]).shape[
                 1] < self.L and (self._W[3]).shape[1] < self.L:
-
                 # change!!!!!!!
                 if isinstance((self._predict_attr(X, i) == Y[i]), np.ndarray):
                     if (self._predict_attr(X, i) == Y[i]).all():
