@@ -8,11 +8,5 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import random
 
-
-def tnp():
-    return [2, 3], [4, 5]
 if __name__ == '__main__':
-    X = tnp()
-    print(*X)
-
-
+    print(np.all([True, False]))
