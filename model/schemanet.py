@@ -30,7 +30,7 @@ class SchemaNet(Constants):
         return np.concatenate((tmp, (tmp.sum(axis=0) == 0).reshape(1, -1)), axis=0)
 
     def add(self, schemas, i):
-        self._W[i] = np.vstack((self._W[i].T, schemas.T)).T
+        self._W[i] = np.vstack([self._W[i].T, schemas.T]).T
 
     def scipy_solve_lp(self, zero_pred, c, A_ub, b_ub, A_eq, b_eq, maxiter=200):
         options = {'maxiter': maxiter, "disp": False}
@@ -59,6 +59,8 @@ class SchemaNet(Constants):
 
         new_ent = self._get_next_to_predict(X, y, i, log=log)
         self.solved = np.array([new_ent])
+        if self.solved is None:
+            return None
 
         c = (1 - ones_pred).sum(axis=0)
         A_eq = 1 - self.solved
@@ -72,7 +74,7 @@ class SchemaNet(Constants):
         print('needed for:', (self._predict_attr(X, i) == 0).sum(), preds.sum())
         if preds.sum() == 0:
             return None
-        self.solved = np.vstack((X[preds * (self._predict_attr(X, i) == 0)]))
+        self.solved = np.vstack([X[preds * (self._predict_attr(X, i) == 0)]])
         print('solved for:', self.solved.shape)
         if self.solved is None:
             print('CONFLICT DATA')
@@ -183,7 +185,10 @@ class SchemaNet(Constants):
         for i in range(self.M - self.void):
             np.savetxt(path + '/schema' + str(i) + '.txt', self._W[i])
 
-    def load(self, type_name='standard'):
+    def load(self, type_name='standard', is_reward=''):
+        path = '_schemas_' + type_name + is_reward
+        if not os.path.exists(path):
+            return
         for i in range(self.M - self.void):
-            schema = np.loadtxt('_schemas_' + type_name + '/schema' + str(i) + '.txt')
+            schema = np.loadtxt(path + '/schema' + str(i) + '.txt')
             self._W[i] = schema
