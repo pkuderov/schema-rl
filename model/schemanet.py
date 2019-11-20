@@ -6,12 +6,12 @@ from model.constants import Constants
 
 
 class SchemaNet(Constants):
-    def __init__(self, void=1):
+    def __init__(self, void=1, is_for_reward=False):
         self.neighbour_num = ((self.NEIGHBORHOOD_RADIUS * 2 + 1) ** 2) * self.FRAME_STACK_SIZE
         self._W = [np.zeros([self.neighbour_num * self.M + self.ACTION_SPACE_DIM, 1])[:] + 1 for i in range(self.M - 1)]
         self.solved = np.array([])
         self.void = void
-        # self._R = [np.zeros(self.neighbour_num * self.M + self.ACTION_SPACE_DIM) + 1] * 2
+        self.is_for_reward = is_for_reward
 
     def log(self):
         print('current net:\n', [self._W[i].shape for i in range(len(self._W))])
@@ -24,9 +24,14 @@ class SchemaNet(Constants):
     def _schema_predict_attr(self, X, i):
         return ((X == 0) @ self._W[i] == 0) != 0
 
+    def get_schema_num(self):
+        if self.is_for_reward:
+            return self.REWARD_SPACE_DIM
+        else:
+            return self.M - self.void
+
     def predict(self, X):
-        tmp = np.array([self._predict_attr(X, i) for i in range(self.M - self.void)])
-        print('5555555', tmp.shape, (tmp.sum(axis=0) == 0).reshape(1, -1).shape)
+        tmp = np.array([self._predict_attr(X, i) for i in range(self.get_schema_num())])
         return np.concatenate((tmp, (tmp.sum(axis=0) == 0).reshape(1, -1)), axis=0)
 
     def add(self, schemas, i):
@@ -99,8 +104,11 @@ class SchemaNet(Constants):
         pred = self._schema_predict_attr(X, i).T
         return (y[i] - pred) == -1
 
+    def check_lim_size(self):
+        return np.all([schema.shape[1] < self.L for schema in self._W])
+
     def _remove_wrong_schemas(self, X, y):
-        for i in range(self.M - self.void):
+        for i in range(self.get_schema_num()):
             if len(self._W[i].shape) == 1:
                 break
             wrong_ind = self._actuality_check_attr(X, y, i).sum(axis=1)
@@ -148,24 +156,17 @@ class SchemaNet(Constants):
 
         self._remove_wrong_schemas(X, Y)
 
-        for i in (range(self.M - self.void)):
+        for i in (range(self.get_schema_num())):
 
-            while (self._W[0]).shape[1] < self.L and (self._W[1]).shape[1] < self.L and (self._W[2]).shape[
-                1] < self.L and (self._W[3]).shape[1] < self.L:
-                # change!!!!!!!
-                if isinstance((self._predict_attr(X, i) == Y[i]), np.ndarray):
-                    if (self._predict_attr(X, i) == Y[i]).all():
-                        if log:
-                            if i == 0:
-                                print('ball check', (self._predict_attr(X, i) == 1).any(), (Y[i] == 1).any())
+            while self.check_lim_size():
 
-                            print('all attrs are predicted for attr', i)
-                        break
-                else:
-                    if self._predict_attr(X, i) == Y[i]:
-                        if log:
-                            print('all attrs are predicted for attr', i)
-                        break
+                if (self._predict_attr(X, i) == Y[i]).all():
+                    if log:
+                        if i == 0:
+                            print('ball check', (self._predict_attr(X, i) == 1).any(), (Y[i] == 1).any())
+
+                        print('all attrs are predicted for attr', i)
+                    break
 
                 x, y = self._get_not_predicted(X, Y[i], i)
 
@@ -182,13 +183,14 @@ class SchemaNet(Constants):
         path = '_schemas_' + type_name + is_reward
         if not os.path.exists(path):
             os.makedirs(path)
-        for i in range(self.M - self.void):
+        for i in range(self.get_schema_num()):
             np.savetxt(path + '/schema' + str(i) + '.txt', self._W[i])
 
     def load(self, type_name='standard', is_reward=''):
         path = '_schemas_' + type_name + is_reward
         if not os.path.exists(path):
             return
-        for i in range(self.M - self.void):
+        for i in range(self.get_schema_num()):
             schema = np.loadtxt(path + '/schema' + str(i) + '.txt')
-            self._W[i] = schema
+            if len(schema.shape) > 1:
+                self._W[i] = schema
