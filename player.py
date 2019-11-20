@@ -1,12 +1,14 @@
 from environment.schema_games.breakout.games import StandardBreakout
 from model.featurematrix import FeatureMatrix
 import numpy as np
-from model.schemanet import SchemaNet
 from model.inference import SchemaNetwork
 import time
 from model.constants import Constants
 import random
 import environment.schema_games.breakout.constants as constants
+# from testing.testing import HardcodedSchemaVectors
+# from model.schemanet import SchemaNet
+from model.visualizer import Visualizer
 
 
 class Player(Constants):
@@ -16,6 +18,14 @@ class Player(Constants):
         self.game_type = game_type
         self._memory = []
         self.rewards = []
+
+        self.model.load()
+        self.reward_model.void = 4
+        self.reward_model.load(is_reward='reward')
+
+        for i in range(self.M - self.reward_model.void):
+            print('**', (self.reward_model._W[i]).shape)
+
         return
 
     def _transform_to_array(self, l, pos=0, neg=0, ):
@@ -30,14 +40,14 @@ class Player(Constants):
     # transform data for learning:
     def _x_add_prev_time(self, action):
 
-        X = np.vstack((matrix.transform_matrix_with_action(action=action) for matrix in self._memory[:-1]))
+        X = np.vstack([matrix.transform_matrix_with_action(action=action) for matrix in self._memory[:-1]])
         X_no_actions = (X.T[:-self.ACTION_SPACE_DIM]).T
         actions = (X.T[-self.ACTION_SPACE_DIM:]).T
         X = np.concatenate((X_no_actions[:-self.N], X_no_actions[self.N:], actions[self.N:]), axis=1)
         return X
 
     def _y_add_prev_time(self):
-        return np.vstack((matrix.matrix.T for matrix in self._memory[2:]))
+        return np.vstack([matrix.matrix.T for matrix in self._memory[2:]])
 
     def _check_for_update(self, X, old_state):
         old_state = np.array(old_state)
@@ -73,9 +83,15 @@ class Player(Constants):
             return 1
         return 0
 
-    def _get_action_for_reward(self, env):
+    def _get_action_for_reward(self, env, randomness=True):
         pos_ball = 0
         pos_paddle = 0
+
+        if randomness:
+            r = random.randint(1, 10)
+            if r < 4:
+                return 0
+
         for ball in env.balls:
             if ball.is_entity:
                 for state, eid in env.parse_object_into_pixels(ball):
@@ -95,18 +111,21 @@ class Player(Constants):
     def play(self, game_type=StandardBreakout,
              learning_freq=3,
              log=False, cheat=False):
-        old_state = []
+
         vis_counter = 0
 
         flag = 0
 
         # don't hardcode size!!
-        length_a = 253
+        length_a = self.M * (
+                    self.NEIGHBORHOOD_RADIUS * 2 + 1) ** 2 * self.FRAME_STACK_SIZE + self.ACTION_SPACE_DIM  # 253
         length_e = 5
         X_global = np.zeros((1, length_a))
         X_reward = np.zeros((1, length_a))
         y_global = np.zeros((length_e, 1))
         y_reward = np.zeros((length_e, 1))
+
+        visualizer = Visualizer(None, None, None)
 
         for i in range(self.EP_NUM):
             env = game_type(return_state_as_image=False)
@@ -124,6 +143,9 @@ class Player(Constants):
                 vis_counter += 1
 
                 self._memory.append(FeatureMatrix(env))
+                visualizer.set_iter(vis_counter)
+                visualizer.visualize_env_state(FeatureMatrix(env).matrix)
+
 
                 # learn new schemas
                 if j > 1:
@@ -156,17 +178,24 @@ class Player(Constants):
 
                     # make a decision
                     rand = random.randint(1, 10)
-                    if flag == 0 and rand < 8:
-                        action = self._get_action_for_reward(env)
+                    if flag < 5 and rand < 8:
+                        if len(actions) > 0:
+                            action = actions.pop(0)
+                        else:
+                            action = self._get_action_for_reward(env)
+
                     else:
                         start = time.time()
 
                         W = [w == 1 for w in self.model._W]
                         R = [self.reward_model._W[0] == 1, self.reward_model._W[1] == 1]
 
+                        # W, R = HardcodedSchemaVectors.gen_schema_matrices()
+                        print('!!!!!!!!')
+
                         if len(actions) > 0:
                             action = actions.pop(0)
-                        elif all(w.shape[1] > 1 for w in W):
+                        elif all(w.shape[1] > 0 for w in W):
                             frame_stack = [obj.matrix for obj in self._memory[-self.FRAME_STACK_SIZE:]]
                             decision_model = SchemaNetwork(W, R, frame_stack)
                             decision_model.set_curr_iter(vis_counter)
@@ -180,18 +209,24 @@ class Player(Constants):
                 print('action:', action)
                 state, reward, done, _ = env.step(action)
                 if reward == 1:
-                    actions = []
-                    if flag == 0:
+                    actions = [0, 1, 2]
+                    if flag == 3:
                         print('PLAYER CHANGED')
-                    flag = 1
+                    flag += 1
 
                     #
                 elif reward == -1:
                     j = 0
-                    actions = []
+                    actions = [0, 1, 2]
                     self._free_mem()
 
                 self.rewards.append(reward)
+
+                if flag == 100:
+                    print(self.rewards)
+                    self.reward_model.save(is_reward='reward')
+                    self.model.save()
+                    return
 
             if log:
                 print('step:', i)
