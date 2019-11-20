@@ -20,12 +20,7 @@ class Player(Constants):
         self.rewards = []
 
         self.model.load()
-        self.reward_model.void = 4
         self.reward_model.load(is_reward='reward')
-
-        for i in range(self.M - self.reward_model.void):
-            print('**', (self.reward_model._W[i]).shape)
-
         return
 
     def _transform_to_array(self, l, pos=0, neg=0, ):
@@ -108,6 +103,11 @@ class Player(Constants):
     def _free_mem(self):
         self._memory = []
 
+    def save(self):
+        print(self.rewards)
+        self.reward_model.save(is_reward='reward')
+        self.model.save()
+
     def play(self, game_type=StandardBreakout,
              learning_freq=3,
              log=False, cheat=False):
@@ -145,7 +145,6 @@ class Player(Constants):
                 self._memory.append(FeatureMatrix(env))
                 visualizer.set_iter(vis_counter)
                 visualizer.visualize_env_state(FeatureMatrix(env).matrix)
-
 
                 # learn new schemas
                 if j > 1:
@@ -191,8 +190,6 @@ class Player(Constants):
                         R = [self.reward_model._W[0] == 1, self.reward_model._W[1] == 1]
 
                         # W, R = HardcodedSchemaVectors.gen_schema_matrices()
-                        print('!!!!!!!!')
-
                         if len(actions) > 0:
                             action = actions.pop(0)
                         elif all(w.shape[1] > 0 for w in W):
@@ -221,12 +218,6 @@ class Player(Constants):
                     self._free_mem()
 
                 self.rewards.append(reward)
-
-                if flag == 100:
-                    print(self.rewards)
-                    self.reward_model.save(is_reward='reward')
-                    self.model.save()
-                    return
 
             if log:
                 print('step:', i)
