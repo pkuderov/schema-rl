@@ -9,4 +9,4 @@ from PIL import Image
 import random
 
 if __name__ == '__main__':
-    print([1 for i in range(-1 // 2 + 1, 1 // 2 + 1)])
+    print(np.all([True, False]))
