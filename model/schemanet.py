@@ -16,6 +16,22 @@ class SchemaNet(Constants):
     def log(self):
         print('current net:\n', [self._W[i].shape for i in range(len(self._W))])
 
+    # def
+
+    def _logical_filter(self, w, i, log=False):
+
+        # index of previous central attribute
+        ind = self.M * (self.NEIGHBORHOOD_RADIUS * 2 + 1) ** 2 + i
+
+        # if smth happened while agent stayed sill that was not due to agent's action
+        if w[-self.ACTION_SPACE_DIM] and not w[ind]:
+            schema = w
+            schema[-self.ACTION_SPACE_DIM] = False
+            if log:
+                print('action deleted')
+            return schema
+        return w
+
     def _predict_attr(self, X, i):
         if len(self._W[i].shape) == 1:
             return ((X == 0) @ self._W[i]) == 0
@@ -104,7 +120,7 @@ class SchemaNet(Constants):
         pred = self._schema_predict_attr(X, i).T
         return (y[i] - pred) == -1
 
-    def check_lim_size(self):
+    def _check_lim_size(self):
         return np.all([schema.shape[1] < self.L for schema in self._W])
 
     def _remove_wrong_schemas(self, X, y):
@@ -118,34 +134,6 @@ class SchemaNet(Constants):
 
             self._W[i] = (self._W[i].T[wrong_ind == 0]).T
 
-    def add_cheat_schema(self, size=202):
-
-        w = np.zeros(size)
-        w[4 * 21 + self.PADDLE_IDX] = 1
-        w[4 * 11 + self.BALL_IDX] = 1
-        w[100 + 4 * 21 + self.PADDLE_IDX] = 1
-        w[100 + 4 * 16 + self.BALL_IDX] = 1
-
-        self.add(w, self.BALL_IDX)
-
-        w = np.zeros(size)
-        w[4 * 23 + self.PADDLE_IDX] = 1
-        w[4 * 14 + self.BALL_IDX] = 1
-        w[100 + 4 * 23 + self.PADDLE_IDX] = 1
-        w[100 + 4 * 18 + self.BALL_IDX] = 1
-
-        self.add(w, self.BALL_IDX)
-
-        w = np.zeros(size)
-        w[4 * 10 + self.WALL_IDX] = 1
-        w[4 * 3 + self.BALL_IDX] = 1
-        w[100 + 4 * 10 + self.WALL_IDX] = 1
-        w[100 + 4 * 9 + self.BALL_IDX] = 1
-
-        self.add(w, self.BALL_IDX)
-
-        return
-
     def fit(self, X, Y, log=True):
         tmp, ind = np.unique(X, return_index=True, axis=0)
         print('index shape', ind.shape, X.shape, Y.shape)
@@ -158,7 +146,7 @@ class SchemaNet(Constants):
 
         for i in (range(self.get_schema_num())):
 
-            while self.check_lim_size():
+            while self._check_lim_size():
 
                 if (self._predict_attr(X, i) == Y[i]).all():
                     if log:
@@ -174,6 +162,7 @@ class SchemaNet(Constants):
                 if w is None:
                     return False
                 w = (self._simplify_schema(x, y) > 0.1).astype(np.bool, copy=False)
+                w = self._logical_filter(w, i, log=log)
                 self.add(w, i)
                 if log:
                     self.log()
