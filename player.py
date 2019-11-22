@@ -109,7 +109,7 @@ class Player(Constants):
         self.model.save()
 
     def play(self, game_type=StandardBreakout,
-             learning_freq=3,
+             learning_freq=5,
              log=False, cheat=False):
 
         vis_counter = 0
@@ -137,7 +137,7 @@ class Player(Constants):
             j = 0
             action = 0
             state, reward, done, _ = env.step(action)
-            actions = [0, 1, 2]
+            actions = [1, 2]
 
             while not done:
                 vis_counter += 1
@@ -172,8 +172,9 @@ class Player(Constants):
                     y_global = (y_global.T[ind]).T
                     # learn env state:
 
-                    print('fitted ok:', self.model.fit(X_global, y_global))
-                    print('fitted reward ok:', self.reward_model.fit(X_reward, y_reward))
+                    if j % learning_freq == learning_freq - 1:
+                        print('fitted ok:', self.model.fit(X_global, y_global))
+                        print('fitted reward ok:', self.reward_model.fit(X_reward, y_reward))
 
                     # make a decision
                     rand = random.randint(1, 10)
@@ -184,8 +185,6 @@ class Player(Constants):
                             action = self._get_action_for_reward(env)
 
                     else:
-                        start = time.time()
-
                         W = [w == 1 for w in self.model._W]
                         R = [self.reward_model._W[0] == 1, self.reward_model._W[1] == 1]
 
