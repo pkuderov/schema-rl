@@ -10,5 +10,10 @@
 ![ ](imgs/img2.png)
 
 ### Добавление данных в память модели:
-1. Добавим в $Memory$ уникальные пары (строка матрицы $X^{transformed}_t$, $Y_t$)
-2. Итоно $Memory = (X, Y)$
+1. Добавим в 
+<img src="https://latex.codecogs.com/gif.latex? Memory " /> уникальные пары (строка матрицы 
+<img src="https://latex.codecogs.com/gif.latex? X^{transformed}_t " />,
+<img src="https://latex.codecogs.com/gif.latex? Y_t" />)
+
+2. Итого 
+<img src="https://latex.codecogs.com/gif.latex? Memory = (X, Y) " /> 
