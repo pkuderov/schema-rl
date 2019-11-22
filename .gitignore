@@ -8,5 +8,6 @@
 !*.py
 !*.md
 !*.sh
+!*.png
 
 venv
