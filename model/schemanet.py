@@ -84,7 +84,10 @@ class SchemaNet(Constants):
             return None
 
         c = (1 - ones_pred).sum(axis=0)
-        A_eq = 1 - self.solved
+        try:
+            A_eq = 1 - self.solved
+        except Exception:
+            return None
         b_eq = np.zeros(self.solved.shape[0])
         A_ub = zero_pred - 1
         b_ub = np.zeros(zero_pred.shape[0]) - 1
@@ -134,7 +137,14 @@ class SchemaNet(Constants):
 
             self._W[i] = (self._W[i].T[wrong_ind == 0]).T
 
-    def fit(self, X, Y, log=True):
+    def _cheat(self, w, log=False):
+        _w = w
+        _w[-3:] = np.zeros(3)
+        if log:
+            print(_w.shape)
+        return _w
+
+    def fit(self, X, Y, log=True, cheat=False):
         tmp, ind = np.unique(X, return_index=True, axis=0)
         print('index shape', ind.shape, X.shape, Y.shape)
 
@@ -163,6 +173,9 @@ class SchemaNet(Constants):
                     return False
                 w = (self._simplify_schema(x, y) > 0.1).astype(np.bool, copy=False)
                 w = self._logical_filter(w, i, log=log)
+                if i == 3 and cheat:
+                    w = self._cheat(w, log=True)
+
                 self.add(w, i)
                 if log:
                     self.log()
