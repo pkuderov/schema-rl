@@ -9,6 +9,7 @@ import environment.schema_games.breakout.constants as constants
 # from testing.testing import HardcodedSchemaVectors
 # from model.schemanet import SchemaNet
 from model.visualizer import Visualizer
+from model.experience_buffer import ExperienceBuffer
 
 
 class Player(Constants):
@@ -18,19 +19,11 @@ class Player(Constants):
         self.game_type = game_type
         self._memory = []
         self.rewards = []
+        self.planner = SchemaNetwork()
 
         self.model.load()
         self.reward_model.load(is_reward='reward')
         return
-
-    def _transform_to_array(self, l, pos=0, neg=0, ):
-        print(l)
-        return (np.zeros((l, self.M)) + np.array([pos, neg] + [0] * (self.M - 2))).T
-
-    def _uniqy(self, X):
-        if len(X) == 0:
-            return np.array([])
-        return np.unique(X, axis=0)
 
     # transform data for learning:
     def _x_add_prev_time(self, action):
@@ -43,20 +36,6 @@ class Player(Constants):
 
     def _y_add_prev_time(self):
         return np.vstack([matrix.matrix.T for matrix in self._memory[2:]])
-
-    def _check_for_update(self, X, old_state):
-        old_state = np.array(old_state)
-        update = []
-        for entity in X:
-            if not any((old_state == entity).all(1)):
-                update.append(entity)
-        update = self._uniqy(update)
-        l = len(update)
-        if l == 0:
-            return l, old_state
-        # print('update shape', l,  old_state.shape, np.array(update).shape)
-
-        return l, np.concatenate((old_state, np.array(update)), axis=0)
 
     # def _update_reward(self, ):
 
@@ -109,35 +88,25 @@ class Player(Constants):
         self.model.save()
 
     def play(self, game_type=StandardBreakout,
-             learning_freq=5,
+             learning_freq=30,
              log=False, cheat=False):
 
         vis_counter = 0
 
         flag = 0
-
-        # don't hardcode size!!
-        length_a = self.M * (
-                    self.NEIGHBORHOOD_RADIUS * 2 + 1) ** 2 * self.FRAME_STACK_SIZE + self.ACTION_SPACE_DIM  # 253
-        length_e = 5
-        X_global = np.zeros((1, length_a))
-        X_reward = np.zeros((1, length_a))
-        y_global = np.zeros((length_e, 1))
-        y_reward = np.zeros((length_e, 1))
-
         visualizer = Visualizer(None, None, None)
+        buffer = ExperienceBuffer()
 
         for i in range(self.EP_NUM):
             env = game_type(return_state_as_image=False)
-            # done = False
             env.reset()
-            if cheat:
-                self.model.add_cheat_schema()
 
             j = 0
             action = 0
             state, reward, done, _ = env.step(action)
             actions = [1, 2]
+
+            ready_to_predict = 0
 
             while not done:
                 vis_counter += 1
@@ -153,28 +122,17 @@ class Player(Constants):
                     X = self._x_add_prev_time(action)
                     y = self._y_add_prev_time()
 
-                    X_tmp, ind = np.unique(X, axis=0, return_index=True, )
+                    buffer.add_attr(X, y)
+                    buffer.add_reward(X, reward)
 
-                    X_global = np.concatenate((X_global, X[ind]), axis=0)
-                    y_global = np.concatenate((y_global, y.T[ind].T), axis=1)
-
-                    l, X_reward = self._check_for_update(X[ind], X_reward)
-                    if l > 0:
-                        y_r = self._transform_to_array(l, reward > 0, reward < 0)
-                        y_reward = np.concatenate((y_reward, y_r), axis=1)
-
-                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True)
-                    X_global = X_global[ind]
-                    y_global = (y_global.T[ind]).T
-
-                    X_tmp, ind = np.unique(X_global, axis=0, return_index=True)
-                    X_global = X_global[ind]
-                    y_global = (y_global.T[ind]).T
                     # learn env state:
 
-                    if j % learning_freq == learning_freq - 1:
-                        print('fitted ok:', self.model.fit(X_global, y_global))
-                        print('fitted reward ok:', self.reward_model.fit(X_reward, y_reward))
+                    if j % learning_freq == learning_freq - 4:
+                        actions = [0, 1, 2]
+
+                    if j % learning_freq == learning_freq - 1 :
+                        print('fitted ok:', self.model.fit(*buffer.get_attr_data()))
+                        print('fitted reward ok:', self.reward_model.fit(*buffer.get_reward_data()))
 
                     # make a decision
                     rand = random.randint(1, 10)
@@ -184,7 +142,7 @@ class Player(Constants):
                         else:
                             action = self._get_action_for_reward(env)
 
-                    else:
+                    elif j >= learning_freq:
                         W = [w == 1 for w in self.model._W]
                         R = [self.reward_model._W[0] == 1, self.reward_model._W[1] == 1]
 
@@ -193,11 +151,18 @@ class Player(Constants):
                             action = actions.pop(0)
                         elif all(w.shape[1] > 0 for w in W):
                             frame_stack = [obj.matrix for obj in self._memory[-self.FRAME_STACK_SIZE:]]
-                            decision_model = SchemaNetwork(W, R, frame_stack)
-                            decision_model.set_curr_iter(vis_counter)
-                            actions = list(decision_model.plan_actions())
+                            self.planner.set_weights(W, R)
+                            self.planner.set_curr_iter(vis_counter)
+                            actions = self.planner.plan_actions(frame_stack)
+                            if actions is None:
+                                actions = np.random.randint(low=0,
+                                                            high=self.ACTION_SPACE_DIM,
+                                                            size=1)
                             print(vis_counter, 'got ', len(actions), ' actions:', actions)
+                            actions = list(actions)
                             action = actions.pop(0)
+                    else:
+                        action = self._get_action_for_reward(env)
                     self._memory.pop(0)
 
 

@@ -22,8 +22,9 @@ class Planner(Constants):
         """
         # lazy combining preconditions by AND -> assuming True
         schema.is_reachable = True
-
         for precondition in schema.attribute_preconditions:
+            print('      ', end='')
+            precondition.log()
             if precondition.is_reachable is None:
                 # this node is NOT at t < FRAME_STACK_SIZE (otherwise it would be initialized as reachable)
                 # and we have not computed it's reachability yet
@@ -45,6 +46,8 @@ class Planner(Constants):
         # neg_schemas for reward at the same time step as node's time step
         # neg_schemas = self._reward_nodes[node.t, Reward.sign2idx['neg']].schemas
         # node.sort_schemas_by_harmfulness(neg_schemas)
+
+        node.log()
 
         for schema in node.schemas:
             if schema.is_reachable is None:
