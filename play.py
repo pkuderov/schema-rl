@@ -4,7 +4,7 @@ from player import Player
 
 if __name__ == '__main__':
     model = SchemaNet()
-    debug = True
+    debug = False
     reward_model = SchemaNet(is_for_reward=True)
     standard_player = Player(model, reward_model)
     if debug:
