@@ -153,6 +153,9 @@ class Attribute(Node, Constants):
         if self.t < self.FRAME_STACK_SIZE or self.attribute_idx == self.VOID_IDX:
             self.is_reachable = True
 
+    def log(self):
+        print(self.entity_idx, self.attribute_idx)
+
 
 class FakeAttribute:
     """
@@ -170,6 +173,9 @@ class Action:
         """
         self.idx = idx
         self.t = t
+
+    def log(self):
+        print(self.idx)
 
 
 class Reward(Node):
@@ -189,6 +195,9 @@ class Reward(Node):
     def reset(self):
         super().reset()
         self.weight = None
+
+    def log(self):
+        print(self.sign2idx)
 
 
 class MetaObject:
