@@ -60,3 +60,8 @@ class ExperienceBuffer(Constants):
             y_r = self._transform_to_array(l, reward > 0, reward < 0)
             self.next_state_reward  = np.concatenate((self.next_state_reward , y_r), axis=1)
 
+    def transform_state_to_check(self,  x, reward):
+        X_tmp, ind = np.unique(x, axis=0, return_index=True, )
+        y_r = self._transform_to_array(len(X_tmp), reward > 0, reward < 0)
+        return X_tmp, y_r
+

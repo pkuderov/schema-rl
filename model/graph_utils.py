@@ -186,7 +186,7 @@ class Action:
         self.t = t
 
     def log(self):
-        print(self.idx)
+        print(self.idx, 'action')
 
 
 class Reward(Node):
