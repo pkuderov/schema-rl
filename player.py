@@ -125,6 +125,10 @@ class Player(Constants):
                     buffer.add_attr(X, y)
                     buffer.add_reward(X, reward)
 
+                    X_tmp, r_tmp = buffer.transform_state_to_check(X, reward)
+                    self.reward_model._remove_wrong_schemas(X_tmp, r_tmp)
+
+
                     # learn env state:
 
                     if j % learning_freq == learning_freq - 4:

@@ -75,6 +75,7 @@ class Runner(Constants):
                 if is_planning_needed and can_run_planner:
                     emergency_replanning_timer = None
 
+
                     planner.set_weights(W, R)
                     planner.set_curr_iter(curr_iter)
 
