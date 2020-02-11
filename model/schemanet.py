@@ -52,8 +52,9 @@ class SchemaNet(Constants):
 
     def add(self, schemas, i):
         self._W[i] = np.vstack([self._W[i].T, schemas.T]).T
+        #self._W[i] = np.hstack([self._W[i], schemas])
 
-    def scipy_solve_lp(self, zero_pred, c, A_ub, b_ub, A_eq, b_eq, maxiter=200):
+    def scipy_solve_lp(self, zero_pred, c, A_ub, b_ub, A_eq, b_eq, maxiter=100):
         options = {'maxiter': maxiter, "disp": False}
         if len(zero_pred) == 0:
             return linprog(c=c, A_eq=A_eq, b_eq=b_eq, options=options).x.round(2)
@@ -73,7 +74,7 @@ class SchemaNet(Constants):
         result = X[ind][0]
         return result
 
-    def _get_schema(self, X, y, i, log=True):
+    def _get_schema(self, X, y, i, log=False):
 
         zero_pred = X[y == 0]
         ones_pred = X[y == 1]
@@ -94,12 +95,15 @@ class SchemaNet(Constants):
         w = self.scipy_solve_lp(zero_pred, c, A_ub, b_ub, A_eq, b_eq)
 
         preds = ((X == 0) @ w) == 0
-        print('expected:', (X[preds * (self._predict_attr(X, i) == 0)]).shape)
-        print('needed for:', (self._predict_attr(X, i) == 0).sum(), preds.sum())
+        if log:
+            print('expected:', (X[preds * (self._predict_attr(X, i) == 0)]).shape)
+            print('needed for:', (self._predict_attr(X, i) == 0).sum(), preds.sum())
+
         if preds.sum() == 0:
             return None
         self.solved = np.vstack([X[preds * (self._predict_attr(X, i) == 0)]])
-        print('solved for:', self.solved.shape)
+        if log:
+            print('solved for:', self.solved.shape)
         if self.solved is None:
             print('CONFLICT DATA')
             return None
@@ -126,27 +130,19 @@ class SchemaNet(Constants):
     def _check_lim_size(self):
         return np.all([schema.shape[1] < self.L for schema in self._W])
 
-    def _remove_wrong_schemas(self, X, y):
+    def _remove_wrong_schemas(self, X, y, log=False):
         for i in range(self.get_schema_num()):
             if len(self._W[i].shape) == 1:
                 break
             wrong_ind = self._actuality_check_attr(X, y, i).sum(axis=1)
 
-            if (wrong_ind.sum()) != 0:
+            if (wrong_ind.sum()) != 0 and log:
                 print('outdated schema was detected for attribute', i)
 
             self._W[i] = (self._W[i].T[wrong_ind == 0]).T
 
-    def _cheat(self, w, log=False):
-        _w = w
-        _w[-3:] = np.zeros(3)
-        if log:
-            print(_w.shape)
-        return _w
-
-    def fit(self, X, Y, log=True, cheat=False):
+    def fit(self, X, Y, log=False):
         tmp, ind = np.unique(X, return_index=True, axis=0)
-        print('index shape', ind.shape, X.shape, Y.shape)
 
         X = X[ind]
 
@@ -160,9 +156,6 @@ class SchemaNet(Constants):
 
                 if (self._predict_attr(X, i) == Y[i]).all():
                     if log:
-                        if i == 0:
-                            print('ball check', (self._predict_attr(X, i) == 1).any(), (Y[i] == 1).any())
-
                         print('all attrs are predicted for attr', i)
                     break
 
@@ -173,8 +166,6 @@ class SchemaNet(Constants):
                     return False
                 w = (self._simplify_schema(x, y) > 0.1).astype(np.bool, copy=False)
                 w = self._logical_filter(w, i, log=log)
-                if i == 3 and cheat:
-                    w = self._cheat(w, log=True)
 
                 self.add(w, i)
                 if log:

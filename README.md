@@ -1,20 +1,11 @@
-### Получение данных и препроцессинг данных из среды:
-1. Входные данные - картинка, полученная из среды с $M$ типами различных объектов в момент времени $t$
-2. Каждому пикселю поставим в соответствия тип объекта, частью которого он является
-![ ](imgs/img0.png)
+### Schema Networks: Zero-shot Transfer with a Generative Causal Model of Intuitive Physics
 
-3. Сконкатенирусем матрицы $$X_t$$ и $X_{t-1}$ и добавим к каждой строке индекс текущего действия и обозначим за $X^{transformed}_t$ полученную матрицу
-![ ](imgs/img1.png)
+An object oriented generative model capable of disentangling multiple causes of events and reasoning backward through causes to achieve goals.
 
-4. Выполним запланированное действие и получим результат из среды 
-![ ](imgs/img2.png)
+### Run with
+* python play.py
 
-### Добавление данных в память модели:
-1. Добавим в 
-- <img src="https://latex.codecogs.com/gif.latex? Memory " /> 
-уникальные пары (строка матрицы 
-<img src="https://latex.codecogs.com/gif.latex? X^{transformed}_t " />,
-<img src="https://latex.codecogs.com/gif.latex? Y_t" />)
+### References
+- [Blog post: General Game Playing with Schema Networks](https://www.vicarious.com/general-game-playing-with-schema-networks.html)
+- [Paper: Kansky, Silver, Mély, Eldawy, Lázaro-Gredilla, Lou, Dorfman, Sidor, Phoenix and George. 2017.](https://www.vicarious.com/img/icml2017-schemas.pdf)
 
-2. Итого 
-<img src="https://latex.codecogs.com/gif.latex? Memory = (X, Y) " /> 

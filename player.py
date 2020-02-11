@@ -27,7 +27,6 @@ class Player(Constants):
 
     # transform data for learning:
     def _x_add_prev_time(self, action):
-
         X = np.vstack([matrix.transform_matrix_with_action(action=action) for matrix in self._memory[:-1]])
         X_no_actions = (X.T[:-self.ACTION_SPACE_DIM]).T
         actions = (X.T[-self.ACTION_SPACE_DIM:]).T
@@ -36,8 +35,6 @@ class Player(Constants):
 
     def _y_add_prev_time(self):
         return np.vstack([matrix.matrix.T for matrix in self._memory[2:]])
-
-    # def _update_reward(self, ):
 
     def get_paddle_reward(self, env):
         pl, ph = constants.DEFAULT_PADDLE_SHAPE
@@ -82,6 +79,10 @@ class Player(Constants):
     def _free_mem(self):
         self._memory = []
 
+    def _min_mem(self):
+        if len(self._memory) > 3:
+            self._memory = self._memory[-3:]
+
     def save(self):
         print(self.rewards)
         self.reward_model.save(is_reward='reward')
@@ -105,18 +106,20 @@ class Player(Constants):
             action = 0
             state, reward, done, _ = env.step(action)
             actions = [1, 2]
-
-            ready_to_predict = 0
-
             while not done:
                 vis_counter += 1
 
                 self._memory.append(FeatureMatrix(env))
+                self._min_mem()
+
                 visualizer.set_iter(vis_counter)
                 visualizer.visualize_env_state(FeatureMatrix(env).matrix)
 
                 # learn new schemas
                 if j > 1:
+
+                    if j % 10 == 0:
+                        buffer.log_reward()
 
                     # transform data for learning
                     X = self._x_add_prev_time(action)
@@ -128,15 +131,14 @@ class Player(Constants):
                     X_tmp, r_tmp = buffer.transform_state_to_check(X, reward)
                     self.reward_model._remove_wrong_schemas(X_tmp, r_tmp)
 
-
                     # learn env state:
 
                     if j % learning_freq == learning_freq - 4:
                         actions = [0, 1, 2]
 
                     if j % learning_freq == learning_freq - 1 :
-                        print('fitted ok:', self.model.fit(*buffer.get_attr_data()))
-                        print('fitted reward ok:', self.reward_model.fit(*buffer.get_reward_data()))
+                        self.model.fit(*buffer.get_attr_data())
+                        self.reward_model.fit(*buffer.get_reward_data())
 
                     # make a decision
                     rand = random.randint(1, 10)
@@ -162,7 +164,6 @@ class Player(Constants):
                                 actions = np.random.randint(low=0,
                                                             high=self.ACTION_SPACE_DIM,
                                                             size=1)
-                            print(vis_counter, 'got ', len(actions), ' actions:', actions)
                             actions = list(actions)
                             action = actions.pop(0)
                     else:
@@ -171,7 +172,7 @@ class Player(Constants):
 
 
                 j += 1
-                print('action:', action)
+                # print('action:', action)
                 state, reward, done, _ = env.step(action)
                 if reward == 1:
                     actions = [0, 1, 2]
@@ -179,7 +180,6 @@ class Player(Constants):
                         print('PLAYER CHANGED')
                     flag += 1
 
-                    #
                 elif reward == -1:
                     j = 0
                     actions = [0, 1, 2]
@@ -187,7 +187,5 @@ class Player(Constants):
 
                 self.rewards.append(reward)
 
-            if log:
-                print('step:', i)
 
         self.model.save()

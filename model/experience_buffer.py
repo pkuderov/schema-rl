@@ -14,6 +14,9 @@ class ExperienceBuffer(Constants):
         self.next_state = np.zeros((length_e, 1))
         self.next_state_reward = np.zeros((length_e, 1))
 
+        self.reward = []
+        self.last_log_iter = 0
+
     def get_attr_data(self):
         return self.prev_states, self.next_state
 
@@ -54,6 +57,7 @@ class ExperienceBuffer(Constants):
         return l, np.concatenate((old_state, np.array(update)), axis=0)
 
     def add_reward(self, x, reward):
+        self.reward.append(reward)
         X_tmp, ind = np.unique(x, axis=0, return_index=True, )
         l, self.prev_states_reward = self._check_for_update(x[ind], self.prev_states_reward)
         if l > 0:
@@ -64,4 +68,22 @@ class ExperienceBuffer(Constants):
         X_tmp, ind = np.unique(x, axis=0, return_index=True, )
         y_r = self._transform_to_array(len(X_tmp), reward > 0, reward < 0)
         return X_tmp, y_r
+
+    def log_reward(self):
+        tmp = []
+        f = 0
+        r = 0
+        for i in range(self.last_log_iter, len(self.reward)):
+            r += self.reward[i]
+            if self.reward[i] == -1:
+                f += 1
+            if f == 3:
+                f = 0
+                tmp.append(r)
+                r = 0
+
+        print("mean reward ", np.mean(tmp))
+
+        self.last_log_iter = len(self.reward)
+
 

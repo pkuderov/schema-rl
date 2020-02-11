@@ -14,11 +14,11 @@ class Constants:
 
     USE_LEARNED_SCHEMAS = False
 
-    VISUALIZE_STATE = True
+    VISUALIZE_STATE = False
     VISUALIZE_SCHEMAS = False
-    VISUALIZE_INNER_STATE = True
+    VISUALIZE_INNER_STATE = False
     VISUALIZE_BACKTRACKING_SCHEMAS = True
-    VISUALIZE_BACKTRACKING_INNER_STATE = True
+    VISUALIZE_BACKTRACKING_INNER_STATE = False
 
     if not DEBUG:
         if ENV_SIZE == 'DEFAULT':
@@ -64,6 +64,7 @@ class Constants:
     PADDLE_IDX = 1
     WALL_IDX = 2
     BRICK_IDX = 3
+
     if not DEBUG:
         VOID_IDX = 4
     else:
@@ -73,6 +74,8 @@ class Constants:
     ACTION_NOP = 0
     ACTION_MOVE_LEFT = 1
     ACTION_MOVE_RIGHT = 2
+
+    EP_NUM = 100
 
     ENTITY_NAMES = {
         BALL_IDX: 'BALL',
