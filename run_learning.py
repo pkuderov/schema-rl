@@ -115,7 +115,8 @@ def main():
     args = parser.parse_args()
 
     start_time = time.time()
-    runner = LearningRunner(**args)
+    runner = LearningRunner(n_episodes=args.n_episodes,
+                            n_steps=args.n_steps)
     runner.learn()
     print('Elapsed time: {}'.format(time.time() - start_time))
 
