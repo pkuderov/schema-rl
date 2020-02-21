@@ -1,5 +1,6 @@
 from collections import deque
 import time
+import argparse
 import numpy as np
 from environment.schema_games.breakout.games import StandardBreakout
 from model.constants import Constants
@@ -108,12 +109,13 @@ class LearningRunner(Constants):
 
 
 def main():
-    n_episodes = 1
-    n_steps = 2048
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--n_episodes', '--ep', type=int, default=1)
+    parser.add_argument('--n_steps', '--st', type=int, default=100)
+    args = parser.parse_args()
 
     start_time = time.time()
-    runner = LearningRunner(n_episodes=n_episodes,
-                            n_steps=n_steps)
+    runner = LearningRunner(**args)
     runner.learn()
     print('Elapsed time: {}'.format(time.time() - start_time))
 
