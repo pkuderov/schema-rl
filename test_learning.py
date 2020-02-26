@@ -15,11 +15,17 @@ class DataLoader(Constants):
         self._shaper = shaper
 
     def make_batch(self, observations, actions, reward):
-        frame_stack = [observations[idx] for idx in range(self.FRAME_STACK_SIZE)]
-        action = actions[self.FRAME_STACK_SIZE - 1]
+        # frame_stack = [observations[idx] for idx in range(self.FRAME_STACK_SIZE)]
+        # action = actions[self.FRAME_STACK_SIZE - 1]
+        # target = observations[self.FRAME_STACK_SIZE][:, :self.N_PREDICTABLE_ATTRIBUTES]
+        # rewards = np.full(target.shape[0], reward) == 1
+        frame_stack = list(observations)[:-1]  # t-1
+        action = actions[-2]  # t-1
+        next_frame = observations[-1]  # t
+        target = next_frame[:, :self.N_PREDICTABLE_ATTRIBUTES]  # t
+        rewards = np.full(target.shape[0], reward == 1)  # t-1
+
         augmented_entities = self._shaper.transform_matrix(frame_stack, action=action)
-        target = observations[self.FRAME_STACK_SIZE][:, :self.N_PREDICTABLE_ATTRIBUTES]
-        rewards = np.full(target.shape[0], reward) == 1
         batch = GreedySchemaLearner.Batch(augmented_entities, target, rewards)
         return batch
 
@@ -111,7 +117,7 @@ class LearningRunner(Constants):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_episodes', '--ep', type=int, default=1)
-    parser.add_argument('--n_steps', '--st', type=int, default=100)
+    parser.add_argument('--n_steps', '--st', type=int, default=Constants.LEARNING_PERIOD)
     args = parser.parse_args()
 
     start_time = time.time()
