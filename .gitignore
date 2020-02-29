@@ -8,3 +8,6 @@
 !*.txt
 
 venv
+
+!*.ipynb
+/.ipynb_checkpoints
