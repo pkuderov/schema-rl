@@ -7,7 +7,8 @@ from environment.schema_games.breakout.games import StandardBreakout
 from model.constants import Constants
 from model.visualizer import Visualizer
 from model.entity_extractor import EntityExtractor
-from model.schema_learner_2 import GreedySchemaLearner
+from model.schema_learner import GreedySchemaLearner as GreedySchemaLearner1
+from model.schema_learner_2 import GreedySchemaLearner as GreedySchemaLearner2, ExperienceBatch as Batch
 from model.shaper import Shaper
 
 
@@ -27,7 +28,7 @@ class DataLoader(Constants):
         rewards = np.full(target.shape[0], reward == 1)  # t-1
 
         augmented_entities = self._shaper.transform_matrix(frame_stack, action=action)
-        batch = GreedySchemaLearner.Batch(augmented_entities, target, rewards)
+        batch = Batch(augmented_entities, target, rewards)
         return batch
 
 
@@ -68,11 +69,11 @@ class LearningRunner(Constants):
 
         return chosen_action
 
-    def learn(self):
+    def learn(self, learner_ind=1):
         env = StandardBreakout(**self.env_params)
         shaper = Shaper()
         data_loader = DataLoader(shaper)
-        learner = GreedySchemaLearner()
+        learner = GreedySchemaLearner1() if learner_ind == 1 else GreedySchemaLearner2()
         visualizer = Visualizer(None, None, None)
 
         env.reset()
@@ -119,17 +120,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_episodes', '--ep', type=int, default=1)
     parser.add_argument('--n_steps', '--st', type=int, default=Constants.LEARNING_PERIOD)
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--seed', type=int, default=None)
+    parser.add_argument('--learner', '--lrn', type=int, default=1)
     args = parser.parse_args()
 
     start_time = time.time()
 
-    np.random.seed(args.seed)
-    random.seed(args.seed)
+    if args.seed is not None:
+        np.random.seed(args.seed)
+        random.seed(args.seed)
 
-    runner = LearningRunner(n_episodes=args.n_episodes,
-                            n_steps=args.n_steps)
-    runner.learn()
+    runner = LearningRunner(n_episodes=args.n_episodes, n_steps=args.n_steps)
+    runner.learn(learner_ind=args.learner)
+
     print('Elapsed time: {}'.format(time.time() - start_time))
 
 

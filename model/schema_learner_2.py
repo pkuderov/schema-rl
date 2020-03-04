@@ -189,6 +189,158 @@ class SchemaSet:
             self._count -= 1
 
 
+ExperienceBatch = namedtuple('ExperienceBatch', ['x', 'y', 'r'])
+
+
+class ReplayBuffer:
+    def __init__(self, n_features=Constants.SCHEMA_VEC_SIZE, n_targets=Constants.N_PREDICTABLE_ATTRIBUTES):
+        self._new_batch_buffer = []
+        self._replay_buffer = ExperienceBatch(
+            np.empty((0, n_features), dtype=bool),
+            np.empty((0, n_targets), dtype=bool),
+            np.empty((0), dtype=bool)
+        )
+
+    def _get_uniques(self, x, y, r, return_index=False):
+        keys = np.packbits(x, axis=1)
+        _, unique_indices = np.unique(keys, axis=0, return_index=True)
+
+        result = (x[unique_indices], y[unique_indices], r[unique_indices])
+        if return_index:
+            return result + (unique_indices, )
+        return result
+
+    def append_to_new_batch(self, batch):
+        for part in batch:
+            assert part.dtype == bool
+
+        x, y, r = batch
+        if x.size:
+            return
+
+        x, y, r = self._get_uniques(x, y, r)
+        filtered_batch = ExperienceBatch(x, y, r)
+        self._new_batch_buffer.append(filtered_batch)
+
+    def flush_new_batch(self):
+        if not self._new_batch_buffer:
+            return None
+
+        # sort it to keep r = 0 entries
+        self._new_batch_buffer = sorted(self._new_batch_buffer, key=lambda batch: batch.r[0])
+
+        x, y, r = zip(*self._new_batch_buffer)
+        x = np.concatenate(x, axis=0)
+        y = np.concatenate(y, axis=0)
+        r = np.concatenate(r, axis=0)
+
+        self._new_batch_buffer = []
+
+        x, y, r = self._get_uniques(x, y, r)
+        return ExperienceBatch(x, y, r)
+
+    @staticmethod
+    def _find_row_index(row: np.ndarray, matrix: np.ndarray):
+        row_indices = np.nonzero(
+            (matrix == row).all(axis=1)
+        )[0]
+
+        # assumes that matrix contains only unique rows => either found 1 row or none
+        if not row_indices.size:
+            return None
+        return row_indices[0]
+
+    def _get_added_and_changed(self, batch):
+        replay_keys = np.packbits(self._replay_buffer)
+        batch_keys = np.packbits(batch)
+
+        added_indices = []      # batch-wise
+        changed_indices = []    # replay_buffer-wise
+
+        for i in range(batch.x.shape[0]):
+            sample_key = batch_keys[i]
+
+            ind = self._find_row_index(sample_key, replay_keys)
+            if ind is None:
+                # new
+                added_indices.append(i)
+            else:
+                # double
+                # todo: move to reward resolver
+                if sample_r[ind] == 0 and self._replay_buffer.r[ind] == 1:
+                    changed_indices.append(ind)
+
+        return added_indices, changed_indices
+
+    def add_batch_to_replay_buffer(self, batch):
+        added_indices, changed_indices = self._get_added_and_changed(batch)
+
+        # add samples
+        x = np.concatenate((self._replay_buffer.x, batch.x[added_indices]), axis=0)
+        y = np.concatenate((self._replay_buffer.y, batch.y[added_indices]), axis=0)
+        r = np.concatenate((self._replay_buffer.r, batch.r[added_indices]), axis=0)
+        self._replay_buffer = ExperienceBatch(x, y, r)
+
+        # change_indices
+        self._replay_buffer.r[changed_indices] = 0
+
+
+    def _add_batch_to_replay_buffer_backup(self, batch):
+        replay_size = self._replay_buffer.x.shape[0]
+
+        # concatenate replay + batch
+        x = np.concatenate((self._replay_buffer.x, batch.x), axis=0)
+        y = np.concatenate((self._replay_buffer.y, batch.y), axis=0)
+        r = np.concatenate((self._replay_buffer.r, batch.r), axis=0)
+
+        # remove duplicates
+        x_filtered, y_filtered, r_filtered, unique_idx = self._get_uniques(x, y, r, return_index=True)
+        self._replay_buffer = ExperienceBatch(x_filtered, y_filtered, r_filtered)
+
+        # find r = 0 duplicates (they can only locate in batch)
+        batch_size = len(batch.x)
+        concat_size = len(x)
+
+        duplicates_mask = np.ones(concat_size, dtype=bool)
+        duplicates_mask[unique_idx] = False
+        no_reward_mask = r == 0
+        reward_renew_indices = np.nonzero(duplicates_mask & no_reward_mask)[0]
+        assert (reward_renew_indices >= replay_size).all()
+        reward_renew_samples = x[reward_renew_indices]
+
+        # renew rewards to zero
+        replay_renewed_indices = []
+        for sample in reward_renew_samples:
+            indices = np.nonzero((self._replay.x == sample).all(axis=1))[0]
+            assert len(indices) == 1
+            idx = indices[0]
+            if self._replay.r[idx] != 0:
+                self._replay.r[idx] = 0
+                replay_renewed_indices.append(idx)
+        print('new r=0 samples overwritten: {}'.format(reward_renew_indices.size))
+
+        # find non-duplicate indices in new batch (batch-based indexing)
+        new_batch_mask = unique_idx >= replay_size
+        new_non_duplicate_indices = unique_idx[new_batch_mask] - replay_size
+
+        # find indices that will index constraints_buff + new_batch_unique synchronously with replay
+        constraints_unique_idx = unique_idx.copy()
+        constraints_unique_idx[new_batch_mask] = replay_size + np.arange(len(new_non_duplicate_indices))
+
+        for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+            attr_batch = (batch.x[new_non_duplicate_indices],
+                          batch.y[new_non_duplicate_indices, attr_idx])
+            self._attr_mip_models[attr_idx].add_to_constraints_buff(attr_batch, constraints_unique_idx)
+
+        reward_batch = (batch.x[new_non_duplicate_indices],
+                        batch.r[new_non_duplicate_indices])
+        self._reward_mip_model.add_to_constraints_buff(reward_batch, constraints_unique_idx,
+                                                       replay_renewed_indices=replay_renewed_indices)
+
+    @property
+    def replay_buffer(self):
+        return self._replay_buffer
+
 
 class GreedySchemaLearner(Constants):
     Batch = namedtuple('Batch', ['x', 'y', 'r'])
