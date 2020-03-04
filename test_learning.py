@@ -7,7 +7,7 @@ from environment.schema_games.breakout.games import StandardBreakout
 from model.constants import Constants
 from model.visualizer import Visualizer
 from model.entity_extractor import EntityExtractor
-from model.schema_learner import GreedySchemaLearner
+from model.schema_learner_2 import GreedySchemaLearner
 from model.shaper import Shaper
 
 

@@ -1,4 +1,6 @@
 from collections import namedtuple
+from itertools import chain
+from abc import ABC, abstractmethod
 import os
 import numpy as np
 import mip.model as mip
@@ -6,11 +8,98 @@ from model.constants import Constants
 from model.visualizer import Visualizer
 
 
+class AbstractMipModel(ABC):
+    @property
+    @abstractmethod
+    def w(self):
+        ...
+
+    @abstractmethod
+    def set_n_threads(self, n_threads=4):
+        ...
+
+    @abstractmethod
+    def set_time_limit(self, time_limit_sec=2):
+        ...
+
+    @abstractmethod
+    def add_constraint(self, constraint):
+        ...
+
+    @abstractmethod
+    def set_min_sum_objective(self, summands):
+        ...
+
+    @abstractmethod
+    def solve(self):
+        ...
+
+    def predict(self, x):
+        w = self.w
+        return (1 - x) @ w
+
+    @staticmethod
+    def get_one_target_constraint(pr):
+        return -.1 <= pr <= .1
+
+    @staticmethod
+    def get_zero_target_constraint(pr):
+        return pr >= .9
+
+    @property
+    def _arr_type(self):
+        return np.int
+
+
+class PythonMipModel(AbstractMipModel):
+    def __init__(self, n_vars, emphasis=1):
+        self._model = mip.Model(mip.MINIMIZE, solver_name=mip.CBC)
+        self._model.verbose = False
+        self._model.emphasis = emphasis
+
+        self._w = np.array([self._model.add_var(var_type='B') for _ in range(n_vars)])
+
+    @property
+    def w(self):
+        return self._w
+
+    def set_n_threads(self, n_threads=4):
+        self._model.threads = n_threads
+
+    def set_time_limit(self, time_limit_sec=2):
+        self._time_limit_sec = time_limit_sec
+
+    def add_constraint(self, constraint):
+        self._model.add_constr(constraint)
+
+    def set_min_sum_objective(self, summands):
+        self._model.objective = mip.minimize(mip.xsum(summands))
+
+    def solve(self):
+        status = self._model.optimize(max_seconds=self._time_limit_sec)
+        if not self._is_feasible(status):
+            return None
+
+        schema = self._get_solution()
+        loss = self._get_loss()
+        return schema, loss
+
+    def _get_solution(self):
+        return np.array([v.x for v in self._model.vars], dtype=self._arr_type)
+
+    def _get_loss(self):
+        return self._model.objective_values[0]
+
+    @classmethod
+    def _is_feasible(cls, status):
+        return status in [mip.OptimizationStatus.OPTIMAL, mip.OptimizationStatus.FEASIBLE]
+
+
 class MipModel(Constants):
     """
     instantiated for single attr_idx
     """
-    MAX_OPT_SECONDS = 60
+    MAX_OPT_SECONDS = 5
 
     def __init__(self):
         self._model = mip.Model(mip.MINIMIZE, solver_name=mip.CBC)
@@ -74,6 +163,33 @@ class MipModel(Constants):
         return schema_vec
 
 
+class SchemaSet:
+    def __init__(self, schema_len=Constants.SCHEMA_VEC_SIZE, max_schema_count=Constants.L):
+        self._W = np.ones((schema_len, max_schema_count), dtype=bool)
+        self._count = 1
+        self._max_count = max_schema_count
+
+    @property
+    def count(self):
+        return self._count
+
+    @property
+    def W(self):
+        return self._W[:, :self._count]
+
+    def add_schema(self, schema):
+        if self._count < self._max_count:
+            self._W[:, self._count] = schema
+            self._count += 1
+
+    def remove_schemas(self, schema_indices):
+        for i in schema_indices:
+            # remove i-th schema by replacing it w/ the last schema
+            self._W[:, i] = self._W[:, self._count - 1]
+            self._count -= 1
+
+
+
 class GreedySchemaLearner(Constants):
     Batch = namedtuple('Batch', ['x', 'y', 'r'])
 
@@ -111,8 +227,9 @@ class GreedySchemaLearner(Constants):
             self._buff.append(filtered_batch)
 
     def _handle_duplicates(self, augmented_entities, target, rewards, return_index=False):
-        samples, idx = np.unique(augmented_entities, axis=0, return_index=True)
-        out = [samples, target[idx, :], rewards[idx]]
+        keys = np.packbits(augmented_entities, axis=1)
+        samples, idx = np.unique(keys, axis=0, return_index=True)
+        out = [augmented_entities[idx], target[idx], rewards[idx]]
         if return_index:
             out.append(idx)
         return tuple(out)
@@ -246,35 +363,32 @@ class GreedySchemaLearner(Constants):
     def _delete_incorrect_schemas(self, batch):
         augmented_entities, targets, rewards = batch
         for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
-            attr_prediction = self._predict_attribute(augmented_entities, attr_idx)
+            self._delete_incorrect_attr_schema(attr_idx, augmented_entities, targets)
 
-            # false positive predictions
-            mispredicted_samples_mask = attr_prediction.any(axis=1) & ~targets[:, attr_idx]
+        self._delete_incorrect_reward_schema(augmented_entities, rewards)
 
-            incorrect_schemas_mask = attr_prediction[mispredicted_samples_mask, :].any(axis=0)
-            incorrect_schemas_indices = np.nonzero(incorrect_schemas_mask)[0]
-
-            assert incorrect_schemas_indices.ndim == 1
-
-            n_schemas_deleted = self._delete_attr_schema_vectors(attr_idx, incorrect_schemas_indices)
-
-            if n_schemas_deleted:
-                print('Deleted incorrect attr schemas: {} of {}'.format(
-                    n_schemas_deleted, self.ENTITY_NAMES[attr_idx]))
-
+    def _delete_incorrect_reward_schema(self, augmented_entities, rewards):
         reward_prediction = self._predict_reward(augmented_entities)
-
         # false positive predictions
         mispredicted_samples_mask = reward_prediction.any(axis=1) & ~rewards
-
         incorrect_schemas_mask = reward_prediction[mispredicted_samples_mask, :].any(axis=0)
         incorrect_schemas_indices = np.nonzero(incorrect_schemas_mask)[0]
-
         assert incorrect_schemas_indices.ndim == 1
         n_schemas_deleted = self._delete_reward_schema_vectors(incorrect_schemas_indices)
-
         if n_schemas_deleted:
             print('Deleted incorrect reward schemas: {}'.format(n_schemas_deleted))
+
+    def _delete_incorrect_attr_schema(self, attr_idx, augmented_entities, targets):
+        attr_prediction = self._predict_attribute(augmented_entities, attr_idx)
+        # false positive predictions
+        mispredicted_samples_mask = attr_prediction.any(axis=1) & ~targets[:, attr_idx]
+        incorrect_schemas_mask = attr_prediction[mispredicted_samples_mask, :].any(axis=0)
+        incorrect_schemas_indices = np.nonzero(incorrect_schemas_mask)[0]
+        assert incorrect_schemas_indices.ndim == 1
+        n_schemas_deleted = self._delete_attr_schema_vectors(attr_idx, incorrect_schemas_indices)
+        if n_schemas_deleted:
+            print('Deleted incorrect attr schemas: {} of {}'.format(
+                n_schemas_deleted, self.ENTITY_NAMES[attr_idx]))
 
     def _find_cluster(self, zp_pl_mask, zp_nl_mask, augmented_entities, target, attr_idx, is_reward=False):
         """
