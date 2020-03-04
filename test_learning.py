@@ -1,4 +1,5 @@
 from collections import deque
+import random
 import time
 import argparse
 import numpy as np
@@ -118,9 +119,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_episodes', '--ep', type=int, default=1)
     parser.add_argument('--n_steps', '--st', type=int, default=Constants.LEARNING_PERIOD)
+    parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
 
     start_time = time.time()
+
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+
     runner = LearningRunner(n_episodes=args.n_episodes,
                             n_steps=args.n_steps)
     runner.learn()
