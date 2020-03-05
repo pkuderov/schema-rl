@@ -210,12 +210,44 @@ class Visualizer(Constants):
                              resample=PIL.Image.NEAREST)
         image.save(image_path)
 
+    def visualize_and_dump_schemas(self, W, R):
+        def get_file_name(base_name, vec_idx, ipl=self.ITER_PADDING_LENGTH):
+            # file_name = 'iter_{:0{ipl}}__{}__vec_{:0{ipl}}.png'.format(
+            #     self._iter, self.ENTITY_NAMES[attribute_idx], vec_idx, ipl=self.ITER_PADDING_LENGTH)
+            return f'{base_name}__vec_{vec_idx:0{ipl}}.png'
+
+        def save_schemas(schema_sets, entity_names, base_dir):
+            for schema_set_type, schema_set in enumerate(schema_sets):
+                for vec_idx, vec in enumerate(schema_set.T):
+                    file_name = get_file_name(entity_names[schema_set_type], vec_idx)
+                    path = os.path.join(self._dir2path[base_dir], file_name)
+                    self.save_schema_image(vec, path)
+
+        def dump_weights(W, R):
+            dir_name = 'dump'
+            os.makedirs(dir_name, exist_ok=True)
+            for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+                file_name = 'w_{}.pkl'.format(attr_idx)
+                path = os.path.join(dir_name, file_name)
+                W[attr_idx].dump(path)
+
+            file_name = 'r_pos.pkl'
+            path = os.path.join(dir_name, file_name)
+            R[0].dump(path)
+
+        if not self.VISUALIZE_SCHEMAS:
+            return
+
+        save_schemas(W, self.ENTITY_NAMES, DirName.ATTRIBUTE_SCHEMAS)
+        if R is not None:
+            save_schemas(R, self.REWARD_NAMES, DirName.REWARD_SCHEMAS)
+
+        dump_weights(W, R)
+
     def visualize_schemas(self, W, R):
         # attribute schemas
         for attribute_idx, w in enumerate(W):
             for vec_idx, vec in enumerate(w.T):
-                # file_name = 'iter_{:0{ipl}}__{}__vec_{:0{ipl}}.png'.format(
-                #     self._iter, self.ENTITY_NAMES[attribute_idx], vec_idx, ipl=self.ITER_PADDING_LENGTH)
                 file_name = '{}__vec_{:0{ipl}}.png'.format(
                     self.ENTITY_NAMES[attribute_idx], vec_idx, ipl=self.ITER_PADDING_LENGTH)
                 path = os.path.join(self._dir2path[DirName.ATTRIBUTE_SCHEMAS], file_name)
@@ -235,6 +267,9 @@ class Visualizer(Constants):
                 self.save_schema_image(vec, path)
 
     def visualize_replay_buffer(self, replay):
+        if not self.VISUALIZE_REPLAY_BUFFER:
+            return
+
         for idx, sample_vec in enumerate(replay.x):
             file_name = 'sample_{:0{ipl}}.png'.format(
                 idx, ipl=self.ITER_PADDING_LENGTH)

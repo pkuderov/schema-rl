@@ -195,7 +195,7 @@ ExperienceBatch = namedtuple('ExperienceBatch', ['x', 'y', 'r'])
 class ReplayBuffer:
     def __init__(self, n_features=Constants.SCHEMA_VEC_SIZE, n_targets=Constants.N_PREDICTABLE_ATTRIBUTES):
         self._new_batch_buffer = []
-        self._replay_buffer = ExperienceBatch(
+        self._replay_batch = ExperienceBatch(
             np.empty((0, n_features), dtype=bool),
             np.empty((0, n_targets), dtype=bool),
             np.empty((0), dtype=bool)
@@ -251,7 +251,7 @@ class ReplayBuffer:
         return row_indices[0]
 
     def _get_added_and_changed(self, batch):
-        replay_keys = np.packbits(self._replay_buffer)
+        replay_keys = np.packbits(self._replay_batch)
         batch_keys = np.packbits(batch)
 
         added_indices = []      # batch-wise
@@ -267,7 +267,7 @@ class ReplayBuffer:
             else:
                 # double
                 # todo: move to reward resolver
-                if sample_r[ind] == 0 and self._replay_buffer.r[ind] == 1:
+                if sample_r[ind] == 0 and self._replay_batch.r[ind] == 1:
                     changed_indices.append(ind)
 
         return added_indices, changed_indices
@@ -276,70 +276,372 @@ class ReplayBuffer:
         added_indices, changed_indices = self._get_added_and_changed(batch)
 
         # add samples
-        x = np.concatenate((self._replay_buffer.x, batch.x[added_indices]), axis=0)
-        y = np.concatenate((self._replay_buffer.y, batch.y[added_indices]), axis=0)
-        r = np.concatenate((self._replay_buffer.r, batch.r[added_indices]), axis=0)
-        self._replay_buffer = ExperienceBatch(x, y, r)
+        x = np.concatenate((self._replay_batch.x, batch.x[added_indices]), axis=0)
+        y = np.concatenate((self._replay_batch.y, batch.y[added_indices]), axis=0)
+        r = np.concatenate((self._replay_batch.r, batch.r[added_indices]), axis=0)
+        self._replay_batch = ExperienceBatch(x, y, r)
 
         # change_indices
-        self._replay_buffer.r[changed_indices] = 0
+        self._replay_batch.r[changed_indices] = 0
+        print('new r=0 samples overwritten: {}'.format(len(changed_indices)))
 
 
     def _add_batch_to_replay_buffer_backup(self, batch):
-        replay_size = self._replay_buffer.x.shape[0]
+        replay_size = self._replay_batch.x.shape[0]
 
         # concatenate replay + batch
-        x = np.concatenate((self._replay_buffer.x, batch.x), axis=0)
-        y = np.concatenate((self._replay_buffer.y, batch.y), axis=0)
-        r = np.concatenate((self._replay_buffer.r, batch.r), axis=0)
+        x = np.concatenate((self._replay_batch.x, batch.x), axis=0)
+        y = np.concatenate((self._replay_batch.y, batch.y), axis=0)
+        r = np.concatenate((self._replay_batch.r, batch.r), axis=0)
 
-        # remove duplicates
-        x_filtered, y_filtered, r_filtered, unique_idx = self._get_uniques(x, y, r, return_index=True)
-        self._replay_buffer = ExperienceBatch(x_filtered, y_filtered, r_filtered)
-
-        # find r = 0 duplicates (they can only locate in batch)
-        batch_size = len(batch.x)
-        concat_size = len(x)
-
-        duplicates_mask = np.ones(concat_size, dtype=bool)
-        duplicates_mask[unique_idx] = False
-        no_reward_mask = r == 0
-        reward_renew_indices = np.nonzero(duplicates_mask & no_reward_mask)[0]
-        assert (reward_renew_indices >= replay_size).all()
-        reward_renew_samples = x[reward_renew_indices]
-
-        # renew rewards to zero
-        replay_renewed_indices = []
-        for sample in reward_renew_samples:
-            indices = np.nonzero((self._replay.x == sample).all(axis=1))[0]
-            assert len(indices) == 1
-            idx = indices[0]
-            if self._replay.r[idx] != 0:
-                self._replay.r[idx] = 0
-                replay_renewed_indices.append(idx)
-        print('new r=0 samples overwritten: {}'.format(reward_renew_indices.size))
-
-        # find non-duplicate indices in new batch (batch-based indexing)
-        new_batch_mask = unique_idx >= replay_size
-        new_non_duplicate_indices = unique_idx[new_batch_mask] - replay_size
-
-        # find indices that will index constraints_buff + new_batch_unique synchronously with replay
-        constraints_unique_idx = unique_idx.copy()
-        constraints_unique_idx[new_batch_mask] = replay_size + np.arange(len(new_non_duplicate_indices))
-
-        for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
-            attr_batch = (batch.x[new_non_duplicate_indices],
-                          batch.y[new_non_duplicate_indices, attr_idx])
-            self._attr_mip_models[attr_idx].add_to_constraints_buff(attr_batch, constraints_unique_idx)
-
-        reward_batch = (batch.x[new_non_duplicate_indices],
-                        batch.r[new_non_duplicate_indices])
-        self._reward_mip_model.add_to_constraints_buff(reward_batch, constraints_unique_idx,
-                                                       replay_renewed_indices=replay_renewed_indices)
+        # # remove duplicates
+        # x_filtered, y_filtered, r_filtered, unique_idx = self._get_uniques(x, y, r, return_index=True)
+        # self._replay_buffer = ExperienceBatch(x_filtered, y_filtered, r_filtered)
+        #
+        # # find r = 0 duplicates (they can only locate in batch)
+        # batch_size = len(batch.x)
+        # concat_size = len(x)
+        #
+        # duplicates_mask = np.ones(concat_size, dtype=bool)
+        # duplicates_mask[unique_idx] = False
+        # no_reward_mask = r == 0
+        # reward_renew_indices = np.nonzero(duplicates_mask & no_reward_mask)[0]
+        # assert (reward_renew_indices >= replay_size).all()
+        # reward_renew_samples = x[reward_renew_indices]
+        #
+        # # renew rewards to zero
+        # replay_renewed_indices = []
+        # for sample in reward_renew_samples:
+        #     indices = np.nonzero((self._replay.x == sample).all(axis=1))[0]
+        #     assert len(indices) == 1
+        #     idx = indices[0]
+        #     if self._replay.r[idx] != 0:
+        #         self._replay.r[idx] = 0
+        #         replay_renewed_indices.append(idx)
+        # print('new r=0 samples overwritten: {}'.format(reward_renew_indices.size))
+        #
+        # # find non-duplicate indices in new batch (batch-based indexing)
+        # new_batch_mask = unique_idx >= replay_size
+        # new_non_duplicate_indices = unique_idx[new_batch_mask] - replay_size
+        #
+        # # find indices that will index constraints_buff + new_batch_unique synchronously with replay
+        # constraints_unique_idx = unique_idx.copy()
+        # constraints_unique_idx[new_batch_mask] = replay_size + np.arange(len(new_non_duplicate_indices))
+        #
+        # for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+        #     attr_batch = (batch.x[new_non_duplicate_indices],
+        #                   batch.y[new_non_duplicate_indices, attr_idx])
+        #     self._attr_mip_models[attr_idx].add_to_constraints_buff(attr_batch, constraints_unique_idx)
+        #
+        # reward_batch = (batch.x[new_non_duplicate_indices],
+        #                 batch.r[new_non_duplicate_indices])
+        # self._reward_mip_model.add_to_constraints_buff(reward_batch, constraints_unique_idx,
+        #                                                replay_renewed_indices=replay_renewed_indices)
 
     @property
-    def replay_buffer(self):
-        return self._replay_buffer
+    def replay_batch(self):
+        return self._replay_batch
+
+
+class SchemaSetsLearner:
+    def __init__(self,
+            replay_buffer, schema_len=Constants.SCHEMA_VEC_SIZE, n_targets=Constants.N_PREDICTABLE_ATTRIBUTES
+    ):
+        self._replay_buffer = ReplayBuffer(n_features=schema_len, n_targets=n_targets)
+
+        self._attr_schema_sets = [SchemaSet(schema_len) for _ in range(n_targets)]
+        self._rew_schema_set = SchemaSet(schema_len)
+
+        self._attr_mip_models = [PythonMipModel(n_vars=schema_len) for _ in range(self.N_PREDICTABLE_ATTRIBUTES)]
+        self._reward_mip_model = PythonMipModel(n_vars=schema_len)
+
+        self._solved = []
+        self._curr_iter = None
+        self._visualizer = Visualizer(None, None, None)
+
+    def set_curr_iter(self, curr_iter):
+        self._curr_iter = curr_iter
+        self._visualizer.set_iter(curr_iter)
+
+    def take_batch(self, batch):
+        self._replay_buffer.append_to_new_batch(batch)
+
+    def _add_to_replay_and_constraints_buff(self, batch):
+        batch = self._replay_buffer.flush_new_batch()
+        if batch is None:
+            return
+
+        self._replay_buffer.add_batch_to_replay_buffer(batch)
+
+        # === UPDATE Model Constraints ===
+
+        # # find non-duplicate indices in new batch (batch-based indexing)
+        # new_batch_mask = unique_idx >= replay_size
+        # new_non_duplicate_indices = unique_idx[new_batch_mask] - replay_size
+        #
+        # # find indices that will index constraints_buff + new_batch_unique synchronously with replay
+        # constraints_unique_idx = unique_idx.copy()
+        # constraints_unique_idx[new_batch_mask] = replay_size + np.arange(len(new_non_duplicate_indices))
+        #
+        # for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+        #     attr_batch = (batch.x[new_non_duplicate_indices],
+        #                   batch.y[new_non_duplicate_indices, attr_idx])
+        #     self._attr_mip_models[attr_idx].add_to_constraints_buff(attr_batch, constraints_unique_idx)
+        #
+        # reward_batch = (batch.x[new_non_duplicate_indices],
+        #                 batch.r[new_non_duplicate_indices])
+        # self._reward_mip_model.add_to_constraints_buff(reward_batch, constraints_unique_idx,
+        #                                                replay_renewed_indices=replay_renewed_indices)
+
+    def _get_replay_batch(self):
+        if self._replay.x.size:
+            out = self._replay
+        else:
+            out = None
+        return out
+
+    def _predict_attribute(self, augmented_entities, attr_idx):
+        assert augmented_entities.dtype == bool
+
+        n_schemas = self._n_attr_schemas[attr_idx]
+        W = self._W[attr_idx][:, :n_schemas]
+        attribute_prediction = ~(~augmented_entities @ W)
+        return attribute_prediction
+
+    def _predict_reward(self, augmented_entities):
+        assert augmented_entities.dtype == bool
+
+        R = self._R[:, :self._n_reward_schemas]
+        reward_prediction = ~(~augmented_entities @ R)
+        return reward_prediction
+
+    def _add_attr_schema_vec(self, attr_idx, schema_vec):
+        vec_idx = self._n_attr_schemas[attr_idx]
+        if vec_idx < self.L:
+            self._W[attr_idx][:, vec_idx] = schema_vec
+            self._n_attr_schemas[attr_idx] += 1
+
+    def _add_reward_schema_vec(self, schema_vec):
+        vec_idx = self._n_reward_schemas
+        if vec_idx < self.L:
+            self._R[:, vec_idx] = schema_vec
+            self._n_reward_schemas += 1
+
+    def _purge_matrix_columns(self, matrix, col_indices):
+        n_cols_purged = len(col_indices)
+
+        if n_cols_purged:
+            col_size, _ = matrix.shape
+            matrix = np.delete(matrix, col_indices, axis=1)
+            padding = np.ones((col_size, n_cols_purged), dtype=bool)
+            matrix = np.hstack((matrix, padding))
+
+        return matrix, n_cols_purged
+
+    def _delete_attr_schema_vectors(self, attr_idx, vec_indices):
+        matrix, n_cols_purged = self._purge_matrix_columns(self._W[attr_idx], vec_indices)
+        if n_cols_purged:
+            self._W[attr_idx] = matrix
+            self._n_attr_schemas[attr_idx] -= n_cols_purged
+        return n_cols_purged
+
+    def _delete_reward_schema_vectors(self, vec_indices):
+        matrix, n_cols_purged = self._purge_matrix_columns(self._R, vec_indices)
+        if n_cols_purged:
+            self._R = matrix
+            self._n_reward_schemas -= n_cols_purged
+        return n_cols_purged
+
+    def _delete_incorrect_schemas(self, batch):
+        augmented_entities, targets, rewards = batch
+        for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+            self._delete_incorrect_attr_schema(attr_idx, augmented_entities, targets)
+
+        self._delete_incorrect_reward_schema(augmented_entities, rewards)
+
+    def _delete_incorrect_reward_schema(self, augmented_entities, rewards):
+        reward_prediction = self._predict_reward(augmented_entities)
+        # false positive predictions
+        mispredicted_samples_mask = reward_prediction.any(axis=1) & ~rewards
+        incorrect_schemas_mask = reward_prediction[mispredicted_samples_mask, :].any(axis=0)
+        incorrect_schemas_indices = np.nonzero(incorrect_schemas_mask)[0]
+        assert incorrect_schemas_indices.ndim == 1
+        n_schemas_deleted = self._delete_reward_schema_vectors(incorrect_schemas_indices)
+        if n_schemas_deleted:
+            print('Deleted incorrect reward schemas: {}'.format(n_schemas_deleted))
+
+    def _delete_incorrect_attr_schema(self, attr_idx, augmented_entities, targets):
+        attr_prediction = self._predict_attribute(augmented_entities, attr_idx)
+        # false positive predictions
+        mispredicted_samples_mask = attr_prediction.any(axis=1) & ~targets[:, attr_idx]
+        incorrect_schemas_mask = attr_prediction[mispredicted_samples_mask, :].any(axis=0)
+        incorrect_schemas_indices = np.nonzero(incorrect_schemas_mask)[0]
+        assert incorrect_schemas_indices.ndim == 1
+        n_schemas_deleted = self._delete_attr_schema_vectors(attr_idx, incorrect_schemas_indices)
+        if n_schemas_deleted:
+            print('Deleted incorrect attr schemas: {} of {}'.format(
+                n_schemas_deleted, self.ENTITY_NAMES[attr_idx]))
+
+    def _find_cluster(self, zp_pl_mask, zp_nl_mask, augmented_entities, target, attr_idx, is_reward=False):
+        """
+        augmented_entities: zero-predicted only
+        target: scalar vector
+        """
+        assert augmented_entities.dtype == np.int
+        assert target.dtype == np.int
+
+        # find all entries, that can be potentially solved (have True labels)
+        candidates = augmented_entities[zp_pl_mask]
+
+        print('finding cluster...')
+        print('augmented_entities: {}'.format(augmented_entities.shape[0]))
+        print('zp pos samples: {}'.format(candidates.shape[0]))
+
+        if not candidates.size:
+            return None
+
+        zp_pl_indices = np.nonzero(zp_pl_mask)[0]
+
+        #if not is_reward:
+        # sample one entry and add it's idx to 'solved'
+        idx = np.random.choice(zp_pl_indices)
+        self._solved.append(idx)
+
+        # resample candidates
+        zp_pl_mask[idx] = False
+        zp_pl_indices = np.nonzero(zp_pl_mask)[0]
+        candidates = augmented_entities[zp_pl_mask]
+
+        # solve LP
+        objective_coefficients = (1 - candidates).sum(axis=0)
+        objective_coefficients = list(objective_coefficients)
+
+        if not is_reward:
+            new_schema_vector = self._attr_mip_models[attr_idx].optimize(objective_coefficients, zp_nl_mask,
+                                                                         self._solved)
+        else:
+            new_schema_vector = self._reward_mip_model.optimize(objective_coefficients, zp_nl_mask, self._solved)
+
+        if new_schema_vector is None:
+            print('!!! Cannot find cluster !!!')
+            return None
+
+        # add all samples that are solved by just learned schema vector
+        if candidates.size:
+            new_predicted_attribute = (1 - candidates) @ new_schema_vector
+            cluster_members_mask = np.isclose(new_predicted_attribute, 0, rtol=0, atol=self.ADDING_SCHEMA_TOLERANCE)
+            n_new_members = np.count_nonzero(cluster_members_mask)
+
+            if n_new_members:
+                print('Also added to solved: {}'.format(n_new_members))
+                self._solved.extend(zp_pl_indices[cluster_members_mask])
+            #elif is_reward:
+            #    # constraints are satisfied but new vector does not predict any r = 1
+            #    new_schema_vector = None
+            #    print('TRASH REWARD SCHEMA DISCARDED')
+
+        return new_schema_vector
+
+    def _simplify_schema(self, zp_nl_mask, schema_vector, augmented_entities, target, attr_idx, is_reward=False):
+        objective_coefficients = [1] * len(schema_vector)
+
+        if not is_reward:
+            model = self._attr_mip_models[attr_idx]
+        else:
+            model = self._reward_mip_model
+
+        new_schema_vector = model.optimize(objective_coefficients, zp_nl_mask, self._solved)
+        assert new_schema_vector is not None
+
+        return new_schema_vector
+
+    def _binarize_schema(self, schema_vector):
+        threshold = 0.5
+        return schema_vector > threshold
+
+    def _generate_new_schema(self, augmented_entities, targets, attr_idx, is_reward=False):
+        if not is_reward:
+            target = targets[:, attr_idx].astype(np.int, copy=False)
+            prediction = self._predict_attribute(augmented_entities, attr_idx)
+        else:
+            target = targets.astype(np.int, copy=False)
+            prediction = self._predict_reward(augmented_entities)
+
+        augmented_entities = augmented_entities.astype(np.int, copy=False)
+
+        # sample only entries with zero-prediction
+        zp_mask = ~prediction.any(axis=1)
+        pl_mask = target == 1
+        # pos and neg labels' masks
+        zp_pl_mask = zp_mask & pl_mask
+        zp_nl_mask = zp_mask & ~pl_mask
+
+        new_schema_vector = self._find_cluster(zp_pl_mask, zp_nl_mask,
+                                               augmented_entities, target, attr_idx,
+                                               is_reward=is_reward)
+        if new_schema_vector is None:
+            return None
+
+        new_schema_vector = self._simplify_schema(zp_nl_mask, new_schema_vector,
+                                                  augmented_entities, target, attr_idx,
+                                                  is_reward=is_reward)
+        if new_schema_vector is None:
+            print('!!! Cannot simplify !!!')
+            return None
+
+        new_schema_vector = self._binarize_schema(new_schema_vector)
+
+        self._solved.clear()
+
+        return new_schema_vector
+
+    def get_weights(self):
+        learned_W = [W[:, ~np.all(W, axis=0)] for W in self._W]
+        if any(w.size == 0 for w in learned_W):
+            learned_W = None
+
+        learned_R = [self._R[:, ~np.all(self._R, axis=0)]]
+        return learned_W, learned_R
+
+    @property
+    def learned_W(self):
+        return [schema_set.W for schema_set in self._attr_schema_sets]
+
+
+    @property
+    def learned_R(self):
+        return [self._rew_schema_set.W]
+
+    def learn(self):
+        # get full batch from buffer
+        new_batch = self._replay_buffer.flush_new_batch()
+        if buff_batch is not None:
+            self._delete_incorrect_schemas(new_batch)
+            self._add_to_replay_and_constraints_buff(new_batch)
+
+        # get all data to learn on
+        replay_batch = self._replay_buffer.replay_batch
+        if replay_batch is None:
+            return
+
+        augmented_entities, targets, rewards = replay_batch
+
+        for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
+            while self._n_attr_schemas[attr_idx] < self.L:
+                new_schema_vec = self._generate_new_schema(augmented_entities, targets, attr_idx)
+                if new_schema_vec is None:
+                    break
+                self._add_attr_schema_vec(attr_idx, new_schema_vec)
+
+        while self._n_reward_schemas < self.L:
+            new_schema_vec = self._generate_new_schema(augmented_entities, rewards, None, is_reward=True)
+            if new_schema_vec is None:
+                break
+            self._add_reward_schema_vec(new_schema_vec)
+
+        self._visualizer.visualize_and_dump_schemas(self.learned_W, self.learned_R)
+        self._visualizer.visualize_replay_buffer(self._replay_buffer.replay_batch)
+
 
 
 class GreedySchemaLearner(Constants):
