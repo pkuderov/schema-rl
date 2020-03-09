@@ -1,31 +1,33 @@
 from collections import namedtuple
-import os
-from typing import List, Any
+from typing import List, Tuple
 
-import numpy as np
 import mip.model as mip
-from mip import Model
-from numpy.core._multiarray_umath import ndarray
+import numpy as np
 
 from model.constants import Constants
 from model.visualizer import Visualizer
 
 
-def predict(x: ndarray, schema_set: ndarray):
+def _predict(x: np.ndarray, schema_set: np.ndarray):
     # both dtype bool
     assert x.dtype == np.bool
     assert schema_set.dtype == np.bool
     return ~(~x @ schema_set)
 
 
+def _1d_mask_to_indices(mask: np.ndarray):
+    assert mask.ndim == 1
+    return np.nonzero(mask)[0]
+
+
 ExperienceBatch = namedtuple('ExperienceBatch', ['x', 'y', 'r'])
 
 
 class ReplayBuffer:
-    '''
+    """
     Encapsulates collecting experience data into replay buffer, handling a) sample uniqueness constraint,
     b) r=0 samples priority over the same samples w/ r>0
-    '''
+    """
 
     _new_batch_buffer: List[ExperienceBatch]        # temporal buffer for new data
     _replay_batch: ExperienceBatch                  # all unique experience data
@@ -38,17 +40,20 @@ class ReplayBuffer:
             np.empty((0), dtype=bool)
         )
 
+        packed_bits_len = (n_features - 1) // 8 + 1
+        self._replay_batch_keys = np.empty((0, packed_bits_len), dtype=np.uint8)
+
     @property
     def replay_batch(self) -> ExperienceBatch:
         return self._replay_batch
 
     def append_to_new_batch(self, batch):
-        '''Adds new batch to temporal buffer (not to the replay buffer!).'''
+        """Adds new batch to temporal buffer (not to the replay buffer!)."""
         for part in batch:
             assert part.dtype == bool
 
         x, y, r = batch
-        if x.size:
+        if not x.size:
             return
 
         x, y, r = self._get_uniques(x, y, r)
@@ -56,10 +61,10 @@ class ReplayBuffer:
         self._new_batch_buffer.append(batch_of_uniques)
 
     def sync_replay_buffer(self) -> Tuple[List[int], List[int]]:
-        '''
+        """
         Syncronizes replay buffer with temporal buffer of new batches.
         Returns tuple of new sample indices and indices with changed reward.
-        '''
+        """
         old_replay_buffer_len = self._replay_batch.x.shape[0]
 
         batch = self._flush_new_batch()
@@ -81,8 +86,9 @@ class ReplayBuffer:
         # both indices now replay-wise
         return new_indices, changed_reward_indices
 
-    def _get_uniques(self, x, y, r):
-        '''Returns unique samples, based on `x` uniqueness.'''
+    @staticmethod
+    def _get_uniques(x, y, r):
+        """Returns unique samples, based on `x` uniqueness."""
 
         # packbits makes bitset from bool array => comparison becomes faster
         keys = np.packbits(x, axis=1)
@@ -91,9 +97,9 @@ class ReplayBuffer:
         return x[unique_indices], y[unique_indices], r[unique_indices]
 
     def _flush_new_batch(self) -> ExperienceBatch:
-        '''Clears temporal batch' buffer and returns its data as a single batch.'''
+        """Clears temporal batch buffer and returns its data as a single batch."""
 
-        # clear buffer
+        # clear temporal new batch buffer
         buffer = self._new_batch_buffer
         self._new_batch_buffer = []
 
@@ -103,7 +109,7 @@ class ReplayBuffer:
         # sort it to keep r = 0 entries after deduplication
         buffer = sorted(buffer, key=lambda batch: batch.r[0])
 
-        x, y, r = zip(*self._new_batch_buffer)
+        x, y, r = zip(*buffer)
         x = np.concatenate(x, axis=0)
         y = np.concatenate(y, axis=0)
         r = np.concatenate(r, axis=0)
@@ -113,9 +119,9 @@ class ReplayBuffer:
 
     @staticmethod
     def _find_row_index(row: np.ndarray, matrix: np.ndarray):
-        row_indices = np.nonzero(
+        row_indices = _1d_mask_to_indices(
             (matrix == row).all(axis=1)
-        )[0]
+        )
 
         # assumes that matrix contains only unique rows => either found 1 row or none
         if not row_indices.size:
@@ -123,12 +129,12 @@ class ReplayBuffer:
         return row_indices[0]
 
     def _get_added_and_changed(self, batch):
-        '''
+        """
         Gets a) indices of new samples in the `batch`,
             b) indices of replay buffer samples with changed reward (based on the data from the `batch`)
-        '''
-        replay_keys = np.packbits(self._replay_batch)
-        batch_keys = np.packbits(batch)
+        """
+        replay_keys = self._replay_batch_keys
+        batch_keys = np.packbits(batch.x, axis=1)
 
         added_indices = []              # new_batch-wise
         changed_reward_indices = []     # replay_buffer-wise
@@ -145,19 +151,21 @@ class ReplayBuffer:
                 if batch.r[ind] == 0 and self._replay_batch.r[ind] == 1:
                     changed_reward_indices.append(ind)
 
+        # cache new replay buffer keys
+        self._replay_batch_keys = np.concatenate((replay_keys, batch_keys[added_indices]), axis=0)
         return added_indices, changed_reward_indices
 
 
 class SchemaSet:
-    '''Represents the set of schema vectors.'''
+    """Represents the set of schema vectors."""
 
-    _W: ndarray         # set of _bool_ schema vectors
+    _W: np.ndarray       # set of _bool_ schema vectors
     _count: int         # current schema count
     _max_count: int     # max possible schema count
 
     def __init__(self, schema_size=Constants.SCHEMA_VEC_SIZE, max_schema_count=Constants.L):
         self._W = np.empty((schema_size, max_schema_count), dtype=bool)
-        self._count = 1
+        self._count = 0
         self._max_count = max_schema_count
 
     def is_full(self):
@@ -168,7 +176,7 @@ class SchemaSet:
         return self._W[:, :self._count]
 
     def predict(self, x):
-        return predict(x, self.W)
+        return _predict(x, self.W)
 
     def add_schema(self, schema):
         self._W[:, self._count] = schema
@@ -182,28 +190,33 @@ class SchemaSet:
 
 
 class PythonMipModel:
-    '''
+    """
     Wraps MIP optimization library methods into library-independent interface.
-    '''
-
+    """
     _model: mip.Model       # model implementing MIP optimization methods
-    _w: ndarray             # model variables to optimize
+    _time_limit_sec: int    # optimization time limit in seconds
+    _w: np.ndarray          # model variables to optimize
 
     def __init__(self, n_vars, emphasis=1):
         self._model = mip.Model(mip.MINIMIZE, solver_name=mip.CBC)
         self._model.verbose = False
         self._model.emphasis = emphasis
+        self._time_limit_sec = 1
 
         self._w = np.array([self._model.add_var(var_type='B') for _ in range(n_vars)])
+
+    @property
+    def w(self):
+        return self._w
 
     def set_n_threads(self, n_threads=4):
         self._model.threads = n_threads
 
-    def set_time_limit(self, time_limit_sec=2):
+    def set_time_limit(self, time_limit_sec):
         self._time_limit_sec = time_limit_sec
 
-    def add_constraint(self, constraint):
-        self._model.add_constr(constraint)
+    def add_constraint(self, constraint: mip.LinExpr) -> mip.Constr:
+        return self._model.add_constr(constraint)
 
     def remove_constraints(self, constraints):
         self._model.remove(constraints)
@@ -218,19 +231,13 @@ class PythonMipModel:
         self._model.objective = mip.minimize(mip.xsum(summands))
 
     def solve(self):
-        status = self._model.optimize(max_seconds=self._time_limit_sec)
+        status = self._model.optimize(max_seconds=self._time_limit_sec, max_solutions=1)
         return status
 
-    def get_solution(self, status):
-        # todo: move print debug info to the higher levels
-        self._print_solution_info(status)
-        if not self._is_feasible(status):
-            return None
-
+    def get_solution(self):
         schema = self._get_solution()
         loss = self._get_loss()
         return schema, loss
-
 
     @staticmethod
     def get_one_target_constraint(pr):
@@ -257,7 +264,7 @@ class PythonMipModel:
     def is_failed(cls, status):
         return not cls.is_feasible(status) and status == mip.OptimizationStatus.NO_SOLUTION_FOUND
 
-    def _print_solution_info(self, status):
+    def print_solution_info(self, status):
         if status == mip.OptimizationStatus.OPTIMAL:
             loss = self._get_loss()
             print_str = f'Optimal solution cost {loss} found'
@@ -279,12 +286,12 @@ class PythonMipModel:
 
 
 class SchemaMipSolver:
-    '''
+    """
     New schema finder.
     Handles consistency and lifecycle of the MIP model and its constraints.
-    '''
+    """
     _model: PythonMipModel                          # MIP model optimizer
-    _one_target_constraints: List[mip.LinExpr]      # list of current "solved" constraints
+    _one_target_constraints: List[mip.Constr]      # list of current "solved" constraints
 
     def __init__(self, n_vars=Constants.SCHEMA_VEC_SIZE):
         self._model = PythonMipModel(n_vars)
@@ -293,7 +300,7 @@ class SchemaMipSolver:
         self._one_target_constraints = []
 
     def add_zero_target_constraints(self, zero_target_x):
-        '''Adds anti- false positive constraints, i.e. constraints "schema shouldn't predict any zero-target"'''
+        """Adds anti- false positive constraints, i.e. constraints "schema shouldn't predict any zero-target\""""
         zero_target_predictions = self._model.predict(zero_target_x)
         constraints = map(self._model.get_zero_target_constraint, zero_target_predictions)
 
@@ -301,23 +308,25 @@ class SchemaMipSolver:
             self._model.add_constraint(constraint)
 
     def find_new_schema(self, x, y):
-        '''Finds new solution (=schema) on unsolved samples.'''
+        """Finds new solution (=schema) on unsolved samples."""
         result = self._find_cluster(x, y)
         if result is None:
             return None
 
         schema, loss = result
-        result, solved_indices = self._simiplify_schema(x, y, schema)
+        result, solved_indices = self._simiplify_schema(x, schema)
 
         schema, loss = result
         return schema, solved_indices
 
     def _find_cluster(self, x, y):
-        '''Finds some feasible solution and returns tuple (solution, loss).'''
+        """Finds some feasible solution and returns tuple (solution, loss)."""
         one_target_mask = y
 
-        unpredicted_yet_sample_count = y[one_target_mask].count()
-        if not unpredicted_yet_sample_count:
+        unsolved_sample_count = np.count_nonzero(y[one_target_mask])
+        # todo: remove verbose printing
+        print('zp pos samples: {}'.format(unsolved_sample_count))
+        if not unsolved_sample_count:
             # nothing to solve
             return None
 
@@ -332,8 +341,8 @@ class SchemaMipSolver:
 
         return res
 
-    def _simiplify_schema(self, x, y, schema):
-        '''Finds an equivalent more sparse solution (=schema) and returns tuple (solution, loss).'''
+    def _simiplify_schema(self, x, schema):
+        """Finds an equivalent more sparse solution (=schema) and returns tuple (solution, loss)."""
         solved_indices = self._get_solved_by_schema(x, schema)
         self._add_one_target_constraints(x[solved_indices])
 
@@ -345,45 +354,50 @@ class SchemaMipSolver:
         return res, solved_indices
 
     def _add_one_target_constraints(self, one_target_x):
-        '''Adds solved constraints, i.e. constraints "solution should predict these samples".'''
+        """Adds solved constraints, i.e. constraints "solution should predict these samples"."""
         one_target_predictions = self._model.predict(one_target_x)
         constraints = map(self._model.get_one_target_constraint, one_target_predictions)
 
         for constraint in constraints:
-            self._model.add_constraint(constraint)
+            # mip.LinExpr
+            constraint = self._model.add_constraint(constraint)
             self._one_target_constraints.append(constraint)
 
     def _remove_solved_constraints(self):
-        '''Removes solved constraints from the model constraints.'''
+        """Removes solved constraints from the model constraints."""
         self._model.remove_constraints(self._one_target_constraints)
         self._one_target_constraints.clear()
 
     @staticmethod
-    def _get_initial_solved_set(one_targets):
-        '''Gets chosen random one-target sample index, that will be chosen as initial "solved".'''
-        one_target_indices = np.nonzero(one_targets)[0]
+    def _get_initial_solved_set(one_target_mask):
+        """Gets chosen random one-target sample index, that will be chosen as initial "solved"."""
+        one_target_indices = _1d_mask_to_indices(one_target_mask)
         i = np.random.choice(one_target_indices)
         return [i]
 
-    def _get_solved_by_schema(self, x, schema):
-        '''Gets all "solved" sample indices, i.e. one-target samples, that's predicted by the `schema`.'''
+    @staticmethod
+    def _get_solved_by_schema(x, schema):
+        """Gets all "solved" sample indices, i.e. one-target samples, that's predicted by the `schema`."""
         # x dtype: bool; schema dtype: int
         schema = schema.astype(np.bool)
 
-        prediction = predict(x, schema)
-        solved_indices = np.nonzero(prediction)
+        prediction = _predict(x, schema)
+        solved_indices = _1d_mask_to_indices(prediction)
         return solved_indices
 
     def _solve_with_retries(self):
-        '''Tries to solve current optimization problem with multiple retries, sequentially increasing time limit.'''
+        """Tries to solve current optimization problem with multiple retries, sequentially increasing time limit."""
         time_limits_sec = [.5, 3, 10, 30]
 
         for tl_sec in time_limits_sec:
             self._model.set_time_limit(tl_sec)
             status = self._model.solve()
 
+            # todo: move print debug info to the higher levels
+            self._model.print_solution_info(status)
+
             if self._model.is_feasible(status):
-                return self._model.get_solution(status)
+                return self._model.get_solution()
 
             if self._model.is_failed(status):
                 break
@@ -396,7 +410,7 @@ class SchemaMipSolver:
 
 
 class SchemaSetLearner:
-    '''Represents one particular learnable schema set and methods to learn it.'''
+    """Represents one particular learnable schema set and methods to learn it."""
 
     _schema_set: SchemaSet              # current learned schema set
     _schema_learner: SchemaMipSolver    # new schema finder
@@ -421,7 +435,6 @@ class SchemaSetLearner:
         while not self._schema_set.is_full():
             print('finding cluster...')
             print('augmented_entities: {}'.format(x.shape[0]))
-            print('zp pos samples: {}'.format())
 
             new_schema, solved_indices = self._schema_learner.find_new_schema(
                 x[zero_prediction_mask], y[zero_prediction_mask]
@@ -436,13 +449,14 @@ class SchemaSetLearner:
             print('Also added to solved: {}'.format(len(solved_indices)))
 
     def _remove_false_positive_schemas(self, x, y):
+        zero_targets_mask = ~y
+
         # shape: samples x schemas
-        prediction = self._schema_set.predict(x)
-        false_positives = np.logical_and(prediction, ~y)
+        prediction = self._schema_set.predict(x[zero_targets_mask])
 
         # shape: num_schemas
-        fp_schemas_mask = false_positives.any(axis=0)
-        fp_schemas_indices = np.nonzero(fp_schemas_mask)
+        fp_schemas_mask = prediction.any(axis=0)
+        fp_schemas_indices = _1d_mask_to_indices(fp_schemas_mask)
 
         self._schema_set.remove_schemas(fp_schemas_indices)
 
@@ -452,13 +466,16 @@ class SchemaSetLearner:
 
 
 class SchemaNetworkLearner:
-    '''Represents the whole set of learnable schema sets (aka schema network) and logic to learn it.'''
+    """
+    Represents the whole set of learnable schema sets (aka schema network) and logic to learn it.
+    """
 
-    _replay_buffer: ReplayBuffer                            # whole experience replay buffer
-    _attr_schema_set_learners: List[SchemaSetLearner]       # list of schema set learners, one for every attribute
-    _rew_schema_set_learner: SchemaSetLearner               # schema set learner for rewards
+    _replay_buffer: ReplayBuffer                        # whole experience replay buffer
+    _attr_schema_set_learners: List[SchemaSetLearner]   # list of schema set learners, one for every attribute
+    _rew_schema_set_learner: SchemaSetLearner           # schema set learner for rewards
 
-    def __init__(self,
+    def __init__(
+            self,
             n_attr_schema_sets=Constants.N_PREDICTABLE_ATTRIBUTES,
             schema_size=Constants.SCHEMA_VEC_SIZE,
             max_schema_count=Constants.L
@@ -474,12 +491,12 @@ class SchemaNetworkLearner:
 
     @property
     def learned_W(self):
-        '''Gets current learned attribute schema sets.'''
+        """Gets current learned attribute schema sets."""
         return [schema_set_learner.W for schema_set_learner in self._attr_schema_set_learners]
 
     @property
     def learned_R(self):
-        '''Gets current learned reward scheam set.'''
+        """Gets current learned reward scheam set."""
         return self._rew_schema_set_learner.W
 
     def set_curr_iter(self, curr_iter):
@@ -487,11 +504,11 @@ class SchemaNetworkLearner:
         self._visualizer.set_iter(curr_iter)
 
     def take_batch(self, batch):
-        '''Takes new batch into experience replay buffer.'''
+        """Takes new batch into experience replay buffer."""
         self._replay_buffer.append_to_new_batch(batch)
 
     def learn(self):
-        '''Finds attribute and reward schema sets regarding the whole current state of replay buffer.'''
+        """Finds attribute and reward schema sets regarding the whole current state of replay buffer."""
         self._sync_replay_buffer()
         self._learn_schema_sets()
 
@@ -499,7 +516,7 @@ class SchemaNetworkLearner:
         self._visualizer.visualize_replay_buffer(self._replay_buffer.replay_batch)
 
     def _sync_replay_buffer(self):
-        '''Syncronizes new experience data with replay buffer and all learned schema sets.'''
+        """Syncronizes new experience data with replay buffer and all learned schema sets."""
         new_indices, changed_reward_indices = self._replay_buffer.sync_replay_buffer()
         replay_batch = self._replay_buffer.replay_batch
         x = replay_batch.x
@@ -507,7 +524,8 @@ class SchemaNetworkLearner:
 
         # Attr schemas: changes are new samples
         changed_indices = new_indices
-        for schema_set_learner, y in zip(self._attr_schema_set_learners, replay_batch.y):
+        for i, schema_set_learner in enumerate(self._attr_schema_set_learners):
+            y = replay_batch.y[:, i]
             schema_set_learner.sync_with_changes(x[changed_indices], y[changed_indices])
 
         # Rew schemas: changes are new samples and samples with changed rewards
@@ -515,10 +533,11 @@ class SchemaNetworkLearner:
         self._rew_schema_set_learner.sync_with_changes(x[changed_indices], r[changed_indices])
 
     def _learn_schema_sets(self):
-        '''Applies schema sets learning step.'''
+        """Applies schema sets learning step."""
         replay_batch = self._replay_buffer.replay_batch
 
-        for schema_set_learner, y in zip(self._attr_schema_set_learners, replay_batch.y):
+        for i, schema_set_learner in enumerate(self._attr_schema_set_learners):
+            y = replay_batch.y[:, i]
             schema_set_learner.learn(replay_batch.x, y)
 
         self._rew_schema_set_learner.learn(replay_batch.x, replay_batch.r)

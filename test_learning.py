@@ -8,7 +8,7 @@ from model.constants import Constants
 from model.visualizer import Visualizer
 from model.entity_extractor import EntityExtractor
 from model.schema_learner import GreedySchemaLearner as GreedySchemaLearner1
-from model.schema_learner_2 import GreedySchemaLearner as GreedySchemaLearner2, ExperienceBatch as Batch
+from model.schema_learner_2 import SchemaNetworkLearner as GreedySchemaLearner2, ExperienceBatch as Batch
 from model.shaper import Shaper
 
 
