@@ -1,21 +1,34 @@
 from collections import namedtuple
-from itertools import chain
-from abc import ABC, abstractmethod
 import os
 from typing import List, Any
 
 import numpy as np
 import mip.model as mip
+from mip import Model
+from numpy.core._multiarray_umath import ndarray
+
 from model.constants import Constants
 from model.visualizer import Visualizer
+
+
+def predict(x: ndarray, schema_set: ndarray):
+    # both dtype bool
+    assert x.dtype == np.bool
+    assert schema_set.dtype == np.bool
+    return ~(~x @ schema_set)
 
 
 ExperienceBatch = namedtuple('ExperienceBatch', ['x', 'y', 'r'])
 
 
 class ReplayBuffer:
-    _new_batch_buffer: List[ExperienceBatch]
-    _replay_batch: ExperienceBatch
+    '''
+    Encapsulates collecting experience data into replay buffer, handling a) sample uniqueness constraint,
+    b) r=0 samples priority over the same samples w/ r>0
+    '''
+
+    _new_batch_buffer: List[ExperienceBatch]        # temporal buffer for new data
+    _replay_batch: ExperienceBatch                  # all unique experience data
 
     def __init__(self, n_features=Constants.SCHEMA_VEC_SIZE, n_targets=Constants.N_PREDICTABLE_ATTRIBUTES):
         self._new_batch_buffer = []
@@ -25,32 +38,12 @@ class ReplayBuffer:
             np.empty((0), dtype=bool)
         )
 
-    def sync_replay_buffer(self):
-        batch = self._flush_new_batch()
-        added_indices, changed_reward_indices = self._get_added_and_changed(batch)
-
-        # added indices relative to the new replay
-        old_len = self._replay_batch.x.shape[0]
-        new_indices = list(range(old_len, old_len + len(added_indices)))
-
-        # make new replay batch
-        x = np.concatenate((self._replay_batch.x, batch.x[added_indices]), axis=0)
-        y = np.concatenate((self._replay_batch.y, batch.y[added_indices]), axis=0)
-        r = np.concatenate((self._replay_batch.r, batch.r[added_indices]), axis=0)
-        self._replay_batch = ExperienceBatch(x, y, r)
-
-        # update rewards
-        self._replay_batch.r[changed_reward_indices] = 0
-        print('new r=0 samples overwritten: {}'.format(len(changed_reward_indices)))
-
-        # both indices now replay-wise
-        return new_indices, changed_reward_indices
-
     @property
     def replay_batch(self) -> ExperienceBatch:
         return self._replay_batch
 
     def append_to_new_batch(self, batch):
+        '''Adds new batch to temporal buffer (not to the replay buffer!).'''
         for part in batch:
             assert part.dtype == bool
 
@@ -59,30 +52,61 @@ class ReplayBuffer:
             return
 
         x, y, r = self._get_uniques(x, y, r)
-        filtered_batch = ExperienceBatch(x, y, r)
-        self._new_batch_buffer.append(filtered_batch)
+        batch_of_uniques = ExperienceBatch(x, y, r)
+        self._new_batch_buffer.append(batch_of_uniques)
 
-    def _get_uniques(self, x, y, r, return_index=False):
+    def sync_replay_buffer(self) -> Tuple[List[int], List[int]]:
+        '''
+        Syncronizes replay buffer with temporal buffer of new batches.
+        Returns tuple of new sample indices and indices with changed reward.
+        '''
+        old_replay_buffer_len = self._replay_batch.x.shape[0]
+
+        batch = self._flush_new_batch()
+        added_indices, changed_reward_indices = self._get_added_and_changed(batch)
+
+        # make new replay buffer batch
+        x = np.concatenate((self._replay_batch.x, batch.x[added_indices]), axis=0)
+        y = np.concatenate((self._replay_batch.y, batch.y[added_indices]), axis=0)
+        r = np.concatenate((self._replay_batch.r, batch.r[added_indices]), axis=0)
+        self._replay_batch = ExperienceBatch(x, y, r)
+
+        # make added indices relative to the new replay buffer
+        new_indices = list(range(old_replay_buffer_len, old_replay_buffer_len + len(added_indices)))
+
+        # update rewards
+        self._replay_batch.r[changed_reward_indices] = 0
+        print('new r=0 samples overwritten: {}'.format(len(changed_reward_indices)))
+
+        # both indices now replay-wise
+        return new_indices, changed_reward_indices
+
+    def _get_uniques(self, x, y, r):
+        '''Returns unique samples, based on `x` uniqueness.'''
+
+        # packbits makes bitset from bool array => comparison becomes faster
         keys = np.packbits(x, axis=1)
         _, unique_indices = np.unique(keys, axis=0, return_index=True)
 
-        result = (x[unique_indices], y[unique_indices], r[unique_indices])
-        if return_index:
-            return result + (unique_indices, )
-        return result
+        return x[unique_indices], y[unique_indices], r[unique_indices]
 
-    def _flush_new_batch(self):
-        assert self._new_batch_buffer
+    def _flush_new_batch(self) -> ExperienceBatch:
+        '''Clears temporal batch' buffer and returns its data as a single batch.'''
 
-        # sort it to keep r = 0 entries
-        self._new_batch_buffer = sorted(self._new_batch_buffer, key=lambda batch: batch.r[0])
+        # clear buffer
+        buffer = self._new_batch_buffer
+        self._new_batch_buffer = []
+
+        # check it's not empty
+        assert buffer
+
+        # sort it to keep r = 0 entries after deduplication
+        buffer = sorted(buffer, key=lambda batch: batch.r[0])
 
         x, y, r = zip(*self._new_batch_buffer)
         x = np.concatenate(x, axis=0)
         y = np.concatenate(y, axis=0)
         r = np.concatenate(r, axis=0)
-
-        self._new_batch_buffer = []
 
         x, y, r = self._get_uniques(x, y, r)
         return ExperienceBatch(x, y, r)
@@ -99,6 +123,10 @@ class ReplayBuffer:
         return row_indices[0]
 
     def _get_added_and_changed(self, batch):
+        '''
+        Gets a) indices of new samples in the `batch`,
+            b) indices of replay buffer samples with changed reward (based on the data from the `batch`)
+        '''
         replay_keys = np.packbits(self._replay_batch)
         batch_keys = np.packbits(batch)
 
@@ -114,66 +142,19 @@ class ReplayBuffer:
                 added_indices.append(i)
             else:
                 # double
-                # todo: move to reward resolver
                 if batch.r[ind] == 0 and self._replay_batch.r[ind] == 1:
                     changed_reward_indices.append(ind)
 
         return added_indices, changed_reward_indices
 
-    def _add_batch_to_replay_buffer_backup(self, batch):
-        replay_size = self._replay_batch.x.shape[0]
-
-        # concatenate replay + batch
-        x = np.concatenate((self._replay_batch.x, batch.x), axis=0)
-        y = np.concatenate((self._replay_batch.y, batch.y), axis=0)
-        r = np.concatenate((self._replay_batch.r, batch.r), axis=0)
-
-        # # remove duplicates
-        # x_filtered, y_filtered, r_filtered, unique_idx = self._get_uniques(x, y, r, return_index=True)
-        # self._replay_buffer = ExperienceBatch(x_filtered, y_filtered, r_filtered)
-        #
-        # # find r = 0 duplicates (they can only locate in batch)
-        # batch_size = len(batch.x)
-        # concat_size = len(x)
-        #
-        # duplicates_mask = np.ones(concat_size, dtype=bool)
-        # duplicates_mask[unique_idx] = False
-        # no_reward_mask = r == 0
-        # reward_renew_indices = np.nonzero(duplicates_mask & no_reward_mask)[0]
-        # assert (reward_renew_indices >= replay_size).all()
-        # reward_renew_samples = x[reward_renew_indices]
-        #
-        # # renew rewards to zero
-        # replay_renewed_indices = []
-        # for sample in reward_renew_samples:
-        #     indices = np.nonzero((self._replay.x == sample).all(axis=1))[0]
-        #     assert len(indices) == 1
-        #     idx = indices[0]
-        #     if self._replay.r[idx] != 0:
-        #         self._replay.r[idx] = 0
-        #         replay_renewed_indices.append(idx)
-        # print('new r=0 samples overwritten: {}'.format(reward_renew_indices.size))
-        #
-        # # find non-duplicate indices in new batch (batch-based indexing)
-        # new_batch_mask = unique_idx >= replay_size
-        # new_non_duplicate_indices = unique_idx[new_batch_mask] - replay_size
-        #
-        # # find indices that will index constraints_buff + new_batch_unique synchronously with replay
-        # constraints_unique_idx = unique_idx.copy()
-        # constraints_unique_idx[new_batch_mask] = replay_size + np.arange(len(new_non_duplicate_indices))
-        #
-        # for attr_idx in range(self.N_PREDICTABLE_ATTRIBUTES):
-        #     attr_batch = (batch.x[new_non_duplicate_indices],
-        #                   batch.y[new_non_duplicate_indices, attr_idx])
-        #     self._attr_mip_models[attr_idx].add_to_constraints_buff(attr_batch, constraints_unique_idx)
-        #
-        # reward_batch = (batch.x[new_non_duplicate_indices],
-        #                 batch.r[new_non_duplicate_indices])
-        # self._reward_mip_model.add_to_constraints_buff(reward_batch, constraints_unique_idx,
-        #                                                replay_renewed_indices=replay_renewed_indices)
-
 
 class SchemaSet:
+    '''Represents the set of schema vectors.'''
+
+    _W: ndarray         # set of _bool_ schema vectors
+    _count: int         # current schema count
+    _max_count: int     # max possible schema count
+
     def __init__(self, schema_size=Constants.SCHEMA_VEC_SIZE, max_schema_count=Constants.L):
         self._W = np.empty((schema_size, max_schema_count), dtype=bool)
         self._count = 1
@@ -187,13 +168,11 @@ class SchemaSet:
         return self._W[:, :self._count]
 
     def predict(self, x):
-        assert x.dtype == bool
-        return ~(~x @ W)
+        return predict(x, self.W)
 
     def add_schema(self, schema):
-        if self._count < self._max_count:
-            self._W[:, self._count] = schema
-            self._count += 1
+        self._W[:, self._count] = schema
+        self._count += 1
 
     def remove_schemas(self, schema_indices):
         for i in schema_indices:
@@ -202,60 +181,20 @@ class SchemaSet:
             self._count -= 1
 
 
-class AbstractMipModel(ABC):
-    @property
-    @abstractmethod
-    def w(self):
-        ...
+class PythonMipModel:
+    '''
+    Wraps MIP optimization library methods into library-independent interface.
+    '''
 
-    @abstractmethod
-    def set_n_threads(self, n_threads=4):
-        ...
+    _model: mip.Model       # model implementing MIP optimization methods
+    _w: ndarray             # model variables to optimize
 
-    @abstractmethod
-    def set_time_limit(self, time_limit_sec=2):
-        ...
-
-    @abstractmethod
-    def add_constraint(self, constraint):
-        ...
-
-    @abstractmethod
-    def set_min_sum_objective(self, summands):
-        ...
-
-    @abstractmethod
-    def solve(self):
-        ...
-
-    def predict(self, x):
-        w = self.w
-        return (1 - x) @ w
-
-    @staticmethod
-    def get_one_target_constraint(pr):
-        return -.1 <= pr <= .1
-
-    @staticmethod
-    def get_zero_target_constraint(pr):
-        return pr >= .9
-
-    @property
-    def _arr_type(self):
-        return np.int
-
-
-class PythonMipModel(AbstractMipModel):
     def __init__(self, n_vars, emphasis=1):
         self._model = mip.Model(mip.MINIMIZE, solver_name=mip.CBC)
         self._model.verbose = False
         self._model.emphasis = emphasis
 
         self._w = np.array([self._model.add_var(var_type='B') for _ in range(n_vars)])
-
-    @property
-    def w(self):
-        return self._w
 
     def set_n_threads(self, n_threads=4):
         self._model.threads = n_threads
@@ -269,11 +208,20 @@ class PythonMipModel(AbstractMipModel):
     def remove_constraints(self, constraints):
         self._model.remove(constraints)
 
+    def predict(self, x):
+        w = self._w
+        # expecting bool, need int ndarray
+        x = x.astype(self._arr_type)
+        return (1 - x) @ w
+
     def set_min_sum_objective(self, summands):
         self._model.objective = mip.minimize(mip.xsum(summands))
 
     def solve(self):
         status = self._model.optimize(max_seconds=self._time_limit_sec)
+        return status
+
+    def get_solution(self, status):
         # todo: move print debug info to the higher levels
         self._print_solution_info(status)
         if not self._is_feasible(status):
@@ -282,6 +230,15 @@ class PythonMipModel(AbstractMipModel):
         schema = self._get_solution()
         loss = self._get_loss()
         return schema, loss
+
+
+    @staticmethod
+    def get_one_target_constraint(pr):
+        return -.1 <= pr <= .1
+
+    @staticmethod
+    def get_zero_target_constraint(pr):
+        return pr >= .9
 
     def _get_solution(self):
         return np.array([v.x for v in self._model.vars], dtype=self._arr_type)
@@ -293,8 +250,12 @@ class PythonMipModel(AbstractMipModel):
         return self._model.objective_bound
 
     @classmethod
-    def _is_feasible(cls, status):
+    def is_feasible(cls, status):
         return status in [mip.OptimizationStatus.OPTIMAL, mip.OptimizationStatus.FEASIBLE]
+
+    @classmethod
+    def is_failed(cls, status):
+        return not cls.is_feasible(status) and status == mip.OptimizationStatus.NO_SOLUTION_FOUND
 
     def _print_solution_info(self, status):
         if status == mip.OptimizationStatus.OPTIMAL:
@@ -312,70 +273,35 @@ class PythonMipModel(AbstractMipModel):
 
         print(print_str)
 
+    @property
+    def _arr_type(self):
+        return np.int
+
 
 class SchemaMipSolver:
+    '''
+    New schema finder.
+    Handles consistency and lifecycle of the MIP model and its constraints.
+    '''
+    _model: PythonMipModel                          # MIP model optimizer
+    _one_target_constraints: List[mip.LinExpr]      # list of current "solved" constraints
+
     def __init__(self, n_vars=Constants.SCHEMA_VEC_SIZE):
         self._model = PythonMipModel(n_vars)
+        self._model.set_n_threads(8)
+
         self._one_target_constraints = []
 
     def add_zero_target_constraints(self, zero_target_x):
+        '''Adds anti- false positive constraints, i.e. constraints "schema shouldn't predict any zero-target"'''
         zero_target_predictions = self._model.predict(zero_target_x)
         constraints = map(self._model.get_zero_target_constraint, zero_target_predictions)
 
         for constraint in constraints:
             self._model.add_constraint(constraint)
 
-    def _add_one_target_constraints(self, one_target_x):
-        one_target_predictions = self._model.predict(one_target_x)
-        constraints = map(self._model.get_one_target_constraint, one_target_predictions)
-
-        for constraint in constraints:
-            self._model.add_constraint(constraint)
-            self._one_target_constraints.append(constraint)
-
-    def _remove_solved_constraints(self):
-        self._model.remove_constraints(self._one_target_constraints)
-        self._one_target_constraints.clear()
-
-    @staticmethod
-    def _get_initial_solved_set(one_targets):
-        one_target_indices = np.nonzero(one_targets)[0]
-        i = np.random.choice(one_target_indices)
-        return [i]
-
-    def _get_solved_by_schema(self, x, schema):
-        prediction = (1 - x) @ schema
-        return np.nonzero(prediction == 0)
-
-    def _solve(self):
-        result = self._model.solve()
-        # if not feasible retry with extended time_limit
-
-        return result
-
-    def _find_cluster(self, x, y):
-        one_target_mask = y
-        solved_indices = self._get_initial_solved_set(one_target_mask)
-        self._add_one_target_constraints(x[solved_indices])
-
-        self._model.set_min_sum_objective(predicts[one_target_mask])
-        res = self._solve()
-        self._remove_solved_constraints()
-
-        return res
-
-    def _simiplify_schema(self, x, y, schema):
-        solved_indices = self._get_solved_by_schema(x, schema)
-        self._add_one_target_constraints(x[solved_indices])
-
-        self._model.set_min_sum_objective(self._model.w)
-        res = self._solve()
-        assert res is not None, '!!! Cannot simplify !!! At least one solution should exist'
-
-        self._remove_solved_constraints()
-        return res, solved_indices
-
     def find_new_schema(self, x, y):
+        '''Finds new solution (=schema) on unsolved samples.'''
         result = self._find_cluster(x, y)
         if result is None:
             return None
@@ -386,6 +312,83 @@ class SchemaMipSolver:
         schema, loss = result
         return schema, solved_indices
 
+    def _find_cluster(self, x, y):
+        '''Finds some feasible solution and returns tuple (solution, loss).'''
+        one_target_mask = y
+
+        unpredicted_yet_sample_count = y[one_target_mask].count()
+        if not unpredicted_yet_sample_count:
+            # nothing to solve
+            return None
+
+        solved_indices = self._get_initial_solved_set(one_target_mask)
+        self._add_one_target_constraints(x[solved_indices])
+
+        one_target_predictions = self._model.predict(x[one_target_mask])
+        self._model.set_min_sum_objective(one_target_predictions)
+
+        res = self._solve_with_retries()
+        self._remove_solved_constraints()
+
+        return res
+
+    def _simiplify_schema(self, x, y, schema):
+        '''Finds an equivalent more sparse solution (=schema) and returns tuple (solution, loss).'''
+        solved_indices = self._get_solved_by_schema(x, schema)
+        self._add_one_target_constraints(x[solved_indices])
+
+        self._model.set_min_sum_objective(self._model.w)
+        res = self._solve_with_retries()
+        assert res is not None, '!!! Cannot simplify !!! At least one solution should exist'
+
+        self._remove_solved_constraints()
+        return res, solved_indices
+
+    def _add_one_target_constraints(self, one_target_x):
+        '''Adds solved constraints, i.e. constraints "solution should predict these samples".'''
+        one_target_predictions = self._model.predict(one_target_x)
+        constraints = map(self._model.get_one_target_constraint, one_target_predictions)
+
+        for constraint in constraints:
+            self._model.add_constraint(constraint)
+            self._one_target_constraints.append(constraint)
+
+    def _remove_solved_constraints(self):
+        '''Removes solved constraints from the model constraints.'''
+        self._model.remove_constraints(self._one_target_constraints)
+        self._one_target_constraints.clear()
+
+    @staticmethod
+    def _get_initial_solved_set(one_targets):
+        '''Gets chosen random one-target sample index, that will be chosen as initial "solved".'''
+        one_target_indices = np.nonzero(one_targets)[0]
+        i = np.random.choice(one_target_indices)
+        return [i]
+
+    def _get_solved_by_schema(self, x, schema):
+        '''Gets all "solved" sample indices, i.e. one-target samples, that's predicted by the `schema`.'''
+        # x dtype: bool; schema dtype: int
+        schema = schema.astype(np.bool)
+
+        prediction = predict(x, schema)
+        solved_indices = np.nonzero(prediction)
+        return solved_indices
+
+    def _solve_with_retries(self):
+        '''Tries to solve current optimization problem with multiple retries, sequentially increasing time limit.'''
+        time_limits_sec = [.5, 3, 10, 30]
+
+        for tl_sec in time_limits_sec:
+            self._model.set_time_limit(tl_sec)
+            status = self._model.solve()
+
+            if self._model.is_feasible(status):
+                return self._model.get_solution(status)
+
+            if self._model.is_failed(status):
+                break
+        return None
+
     def _binarize_schema(self, schema):
         # todo: remove if not needed
         threshold = 0.5
@@ -393,9 +396,18 @@ class SchemaMipSolver:
 
 
 class SchemaSetLearner:
+    '''Represents one particular learnable schema set and methods to learn it.'''
+
+    _schema_set: SchemaSet              # current learned schema set
+    _schema_learner: SchemaMipSolver    # new schema finder
+
     def __init__(self, schema_size, max_schema_count):
         self._schema_set = SchemaSet(schema_size=schema_size, max_schema_count=max_schema_count)
         self._schema_learner = SchemaMipSolver(n_vars=schema_size)
+
+    @property
+    def W(self):
+        return self._schema_set.W
 
     def sync_with_changes(self, x, y):
         self._remove_false_positive_schemas(x, y)
@@ -409,11 +421,14 @@ class SchemaSetLearner:
         while not self._schema_set.is_full():
             print('finding cluster...')
             print('augmented_entities: {}'.format(x.shape[0]))
-            print('zp pos samples: {}'.format(zero_prediction_mask.sum()))
+            print('zp pos samples: {}'.format())
 
             new_schema, solved_indices = self._schema_learner.find_new_schema(
                 x[zero_prediction_mask], y[zero_prediction_mask]
             )
+            if new_schema is None:
+                break
+
             self._schema_set.add_schema(new_schema)
 
             # solved indices are indices, where prediction is 1 (or True)
@@ -437,6 +452,12 @@ class SchemaSetLearner:
 
 
 class SchemaNetworkLearner:
+    '''Represents the whole set of learnable schema sets (aka schema network) and logic to learn it.'''
+
+    _replay_buffer: ReplayBuffer                            # whole experience replay buffer
+    _attr_schema_set_learners: List[SchemaSetLearner]       # list of schema set learners, one for every attribute
+    _rew_schema_set_learner: SchemaSetLearner               # schema set learner for rewards
+
     def __init__(self,
             n_attr_schema_sets=Constants.N_PREDICTABLE_ATTRIBUTES,
             schema_size=Constants.SCHEMA_VEC_SIZE,
@@ -453,27 +474,32 @@ class SchemaNetworkLearner:
 
     @property
     def learned_W(self):
-        return [schema_set_learner._schema_set.W for schema_set_learner in self._attr_schema_set_learners]
+        '''Gets current learned attribute schema sets.'''
+        return [schema_set_learner.W for schema_set_learner in self._attr_schema_set_learners]
 
     @property
     def learned_R(self):
-        return self._rew_schema_set_learner._schema_set.W
+        '''Gets current learned reward scheam set.'''
+        return self._rew_schema_set_learner.W
 
     def set_curr_iter(self, curr_iter):
         self._curr_iter = curr_iter
         self._visualizer.set_iter(curr_iter)
 
     def take_batch(self, batch):
+        '''Takes new batch into experience replay buffer.'''
         self._replay_buffer.append_to_new_batch(batch)
 
     def learn(self):
+        '''Finds attribute and reward schema sets regarding the whole current state of replay buffer.'''
         self._sync_replay_buffer()
-        self._add_schema_sets()
+        self._learn_schema_sets()
 
         self._visualizer.visualize_and_dump_schemas(self.learned_W, self.learned_R)
         self._visualizer.visualize_replay_buffer(self._replay_buffer.replay_batch)
 
     def _sync_replay_buffer(self):
+        '''Syncronizes new experience data with replay buffer and all learned schema sets.'''
         new_indices, changed_reward_indices = self._replay_buffer.sync_replay_buffer()
         replay_batch = self._replay_buffer.replay_batch
         x = replay_batch.x
@@ -488,7 +514,8 @@ class SchemaNetworkLearner:
         changed_indices = new_indices + changed_reward_indices
         self._rew_schema_set_learner.sync_with_changes(x[changed_indices], r[changed_indices])
 
-    def _add_schema_sets(self):
+    def _learn_schema_sets(self):
+        '''Applies schema sets learning step.'''
         replay_batch = self._replay_buffer.replay_batch
 
         for schema_set_learner, y in zip(self._attr_schema_set_learners, replay_batch.y):
