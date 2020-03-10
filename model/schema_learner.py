@@ -164,7 +164,7 @@ class GreedySchemaLearner(Constants):
             if self._replay.r[idx] != 0:
                 self._replay.r[idx] = 0
                 replay_renewed_indices.append(idx)
-        print('new r=0 samples overwritten: {}'.format(reward_renew_indices.size))
+        print('new r=0 samples overwritten: {}'.format(len(replay_renewed_indices)))
 
         # find non-duplicate indices in new batch (batch-based indexing)
         new_batch_mask = unique_idx >= replay_size

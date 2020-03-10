@@ -8,18 +8,6 @@ from model.constants import Constants
 from model.visualizer import Visualizer
 
 
-def _predict(x: np.ndarray, schema_set: np.ndarray):
-    # both dtype bool
-    assert x.dtype == np.bool
-    assert schema_set.dtype == np.bool
-    return ~(~x @ schema_set)
-
-
-def _1d_mask_to_indices(mask: np.ndarray):
-    assert mask.ndim == 1
-    return np.nonzero(mask)[0]
-
-
 ExperienceBatch = namedtuple('ExperienceBatch', ['x', 'y', 'r'])
 
 
@@ -148,7 +136,7 @@ class ReplayBuffer:
                 added_indices.append(i)
             else:
                 # double
-                if batch.r[ind] == 0 and self._replay_batch.r[ind] == 1:
+                if batch.r[i] == 0 and self._replay_batch.r[ind] == 1:
                     changed_reward_indices.append(ind)
 
         # cache new replay buffer keys
@@ -200,7 +188,7 @@ class PythonMipModel:
     def __init__(self, n_vars, emphasis=1):
         self._model = mip.Model(mip.MINIMIZE, solver_name=mip.CBC)
         self._model.verbose = False
-        self._model.emphasis = emphasis
+        # self._model.emphasis = emphasis
         self._time_limit_sec = 1
 
         self._w = np.array([self._model.add_var(var_type='B') for _ in range(n_vars)])
@@ -241,11 +229,11 @@ class PythonMipModel:
 
     @staticmethod
     def get_one_target_constraint(pr):
-        return -.1 <= pr <= .1
+        return pr == 0
 
     @staticmethod
     def get_zero_target_constraint(pr):
-        return pr >= .9
+        return pr >= 1
 
     def _get_solution(self):
         return np.array([v.x for v in self._model.vars], dtype=self._arr_type)
@@ -293,9 +281,9 @@ class SchemaMipSolver:
     _model: PythonMipModel                          # MIP model optimizer
     _one_target_constraints: List[mip.Constr]      # list of current "solved" constraints
 
-    def __init__(self, n_vars=Constants.SCHEMA_VEC_SIZE):
+    def __init__(self, n_vars=Constants.SCHEMA_VEC_SIZE, n_threads=Constants.N_LEARNING_THREADS):
         self._model = PythonMipModel(n_vars)
-        self._model.set_n_threads(8)
+        self._model.set_n_threads(2)
 
         self._one_target_constraints = []
 
@@ -411,13 +399,14 @@ class SchemaMipSolver:
 
 class SchemaSetLearner:
     """Represents one particular learnable schema set and methods to learn it."""
-
     _schema_set: SchemaSet              # current learned schema set
     _schema_learner: SchemaMipSolver    # new schema finder
+    _name: str                          # just a label to distinguish schema sets (entity type or reward)
 
-    def __init__(self, schema_size, max_schema_count):
+    def __init__(self, schema_size, max_schema_count, name):
         self._schema_set = SchemaSet(schema_size=schema_size, max_schema_count=max_schema_count)
         self._schema_learner = SchemaMipSolver(n_vars=schema_size)
+        self._name = name
 
     @property
     def W(self):
@@ -432,21 +421,24 @@ class SchemaSetLearner:
         prediction = self._schema_set.predict(x).any(axis=1)
         zero_prediction_mask = ~prediction
 
-        while not self._schema_set.is_full():
-            print('finding cluster...')
-            print('augmented_entities: {}'.format(x.shape[0]))
+        print(f'{self._name} =>')
+        print('augmented_entities: {}'.format(x.shape[0]))
 
-            new_schema, solved_indices = self._schema_learner.find_new_schema(
-                x[zero_prediction_mask], y[zero_prediction_mask]
-            )
-            if new_schema is None:
+        while not self._schema_set.is_full():
+            result = self._schema_learner.find_new_schema(x[zero_prediction_mask], y[zero_prediction_mask])
+            if result is None:
                 break
 
+            new_schema, solved_indices = result
             self._schema_set.add_schema(new_schema)
 
-            # solved indices are indices, where prediction is 1 (or True)
-            zero_prediction_mask[solved_indices] = False
-            print('Also added to solved: {}'.format(len(solved_indices)))
+            # uncheck solved indices in zero prediction mask (they're relative to zero prediction indices!)
+            zero_prediction_indices = _1d_mask_to_indices(zero_prediction_mask)
+            zero_prediction_mask[zero_prediction_indices[solved_indices]] = False
+
+            print('Added to solved: {}'.format(len(solved_indices)))
+
+        print(f'<= _____')
 
     def _remove_false_positive_schemas(self, x, y):
         zero_targets_mask = ~y
@@ -458,7 +450,9 @@ class SchemaSetLearner:
         fp_schemas_mask = prediction.any(axis=0)
         fp_schemas_indices = _1d_mask_to_indices(fp_schemas_mask)
 
-        self._schema_set.remove_schemas(fp_schemas_indices)
+        if fp_schemas_indices.size:
+            self._schema_set.remove_schemas(fp_schemas_indices)
+            print('Deleted incorrect schemas: {} of {}'.format(len(fp_schemas_indices), self._name))
 
     def _add_anti_false_positives_contraints(self, x, y):
         zero_target_mask = ~y
@@ -482,9 +476,10 @@ class SchemaNetworkLearner:
     ):
         self._replay_buffer = ReplayBuffer(n_features=schema_size, n_targets=n_attr_schema_sets)
         self._attr_schema_set_learners = [
-            SchemaSetLearner(schema_size, max_schema_count) for _ in range(n_attr_schema_sets)
+            SchemaSetLearner(schema_size, max_schema_count, Constants.ENTITY_NAMES[i])
+            for i in range(n_attr_schema_sets)
         ]
-        self._rew_schema_set_learner = SchemaSetLearner(schema_size, max_schema_count)
+        self._rew_schema_set_learner = SchemaSetLearner(schema_size, max_schema_count, 'REWARDS')
 
         self._curr_iter = None
         self._visualizer = Visualizer(None, None, None)
@@ -541,3 +536,15 @@ class SchemaNetworkLearner:
             schema_set_learner.learn(replay_batch.x, y)
 
         self._rew_schema_set_learner.learn(replay_batch.x, replay_batch.r)
+
+
+def _predict(x: np.ndarray, schema_set: np.ndarray):
+    # both dtype bool
+    assert x.dtype == np.bool
+    assert schema_set.dtype == np.bool
+    return ~(~x @ schema_set)
+
+
+def _1d_mask_to_indices(mask: np.ndarray):
+    assert mask.ndim == 1
+    return np.nonzero(mask)[0]
