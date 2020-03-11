@@ -1,7 +1,9 @@
-from collections import namedtuple
 import os
-import numpy as np
+from collections import namedtuple
+
 import mip.model as mip
+import numpy as np
+
 from model.constants import Constants
 from model.visualizer import Visualizer
 
@@ -49,6 +51,9 @@ class MipModel(Constants):
         constraints_mask[solved] = True
 
         constraints_to_add = self._constraints_buff[constraints_mask]
+
+        print(f'Constraints: 0:{len(constraints_to_add) - len(solved)}; 1:{len(solved)}')
+
         for constraint in constraints_to_add:
             model.add_constr(constraint)
 
@@ -130,6 +135,7 @@ class GreedySchemaLearner(Constants):
 
             augmented_entities, targets, rewards = self._handle_duplicates(augmented_entities, targets, rewards)
             out = self.Batch(augmented_entities, targets, rewards)
+            self._buff = []
         return out
 
     def _add_to_replay_and_constraints_buff(self, batch):
@@ -299,6 +305,7 @@ class GreedySchemaLearner(Constants):
         #if not is_reward:
         # sample one entry and add it's idx to 'solved'
         idx = np.random.choice(zp_pl_indices)
+        print(f'INIT SOLVED: {idx} from {zp_pl_indices}')
         self._solved.append(idx)
 
         # resample candidates
@@ -311,8 +318,9 @@ class GreedySchemaLearner(Constants):
         objective_coefficients = list(objective_coefficients)
 
         if not is_reward:
-            new_schema_vector = self._attr_mip_models[attr_idx].optimize(objective_coefficients, zp_nl_mask,
-                                                                         self._solved)
+            new_schema_vector = self._attr_mip_models[attr_idx].optimize(
+                objective_coefficients, zp_nl_mask, self._solved
+            )
         else:
             new_schema_vector = self._reward_mip_model.optimize(objective_coefficients, zp_nl_mask, self._solved)
 
@@ -376,6 +384,7 @@ class GreedySchemaLearner(Constants):
         if new_schema_vector is None:
             return None
 
+        print(np.nonzero(new_schema_vector)[0])
         new_schema_vector = self._simplify_schema(zp_nl_mask, new_schema_vector,
                                                   augmented_entities, target, attr_idx,
                                                   is_reward=is_reward)
@@ -383,6 +392,7 @@ class GreedySchemaLearner(Constants):
             print('!!! Cannot simplify !!!')
             return None
 
+        print(np.nonzero(new_schema_vector)[0])
         new_schema_vector = self._binarize_schema(new_schema_vector)
 
         self._solved.clear()

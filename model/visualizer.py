@@ -240,7 +240,7 @@ class Visualizer(Constants):
 
         save_schemas(W, self.ENTITY_NAMES, DirName.ATTRIBUTE_SCHEMAS)
         if R is not None:
-            save_schemas(R, self.REWARD_NAMES, DirName.REWARD_SCHEMAS)
+            save_schemas([R], self.REWARD_NAMES, DirName.REWARD_SCHEMAS)
 
         dump_weights(W, R)
 
